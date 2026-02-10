@@ -17,7 +17,7 @@ def train(epochs: int, data: np.array, no_surface: int, no_off_surface:int, mode
     pruning_module = None
     
     if prune == True:
-        pruning_module = pm.PruningModule(model=model, threshold=0.01)
+        pruning_module = pm.PruningModule(model=model, threshold_percentage=0.2)
     
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -46,8 +46,9 @@ def train(epochs: int, data: np.array, no_surface: int, no_off_surface:int, mode
         optimizer.step()
 
         if step % 10 == 0:
-            if(prune == True):
+            if(prune == True and step == 50):
                 pruned_neurons = pruning_module.prune()
+                optimizer = torch.optim.Adam(model.parameters(), lr=optimizer.param_groups[0]['lr'])
                 print(f"Pruned {pruned_neurons} neurons.")
             print(f"Step {step} | Loss {current_loss.item()}")
 
