@@ -32,14 +32,13 @@ def targeted_weight_decay(model: si.SIRENSDF, k: int):
 
     penalty = 0.0
 
-    for module in model.hidden.modules():
+    for module in model.hidden[1:].modules():
 
         if isinstance(module, torch.nn.Linear):
             W = module.weight
             col_norms = torch.sum(torch.abs(W), dim=0)
-
-            k_eff = min(k, col_norms.shape[0])
-            indices = torch.topk(-col_norms, k_eff).indices
+            
+            indices = torch.topk(-col_norms, k).indices
             penalty += torch.sum(col_norms[indices])
 
     return penalty
