@@ -63,3 +63,20 @@ class SIRENSDF(nn.Module):
     def forward(self, x):
         x = self.hidden(x)
         return self.final(x)
+    
+    def neuron_counts(model):
+        print("Neuron counts per layer:")
+        print("-" * 40)
+
+        total_neurons = 0
+
+        # hidden layers
+        for i, layer in enumerate(model.hidden):
+            if hasattr(layer, "linear"):
+                n = layer.linear.out_features
+                print(f"Hidden layer {i:2d}: {n:4d} neurons")
+                total_neurons += n
+
+        # final layer
+        final_neurons = model.final.out_features
+        print(f"Final layer    : {final_neurons:4d} neurons")
