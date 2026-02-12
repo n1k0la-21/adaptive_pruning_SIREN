@@ -3,6 +3,7 @@ import src.loss.SDF_loss as loss_module
 import torch
 import numpy as np
 import src.model.pruning_module as pm
+from src.model.densification_module import densify
 
 
 
@@ -17,7 +18,7 @@ def train(epochs: int, data: np.array, no_surface: int, no_off_surface:int, mode
     pruning_module = None
     
     if prune == True:
-        pruning_module = pm.PruningModule(model=model, threshold_percentage=0.2)
+        pruning_module = pm.Pruning_module(model=model, threshold_percentage=0.2)
     
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -47,9 +48,11 @@ def train(epochs: int, data: np.array, no_surface: int, no_off_surface:int, mode
 
         if step % 10 == 0:
             if(prune == True and step == 50):
+                added_frequencies = densify(model=model)
                 pruned_neurons = pruning_module.prune()
                 optimizer = torch.optim.Adam(model.parameters(), lr=optimizer.param_groups[0]['lr'])
                 print(f"Pruned {pruned_neurons} neurons.")
+                print(f"Added {len(added_frequencies)} frequencies to the embedding layer.")
             print(f"Step {step} | Loss {current_loss.item()}")
 
 

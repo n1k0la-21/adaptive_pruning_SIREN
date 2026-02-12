@@ -1,18 +1,17 @@
 import src.model.SIREN as si
-import math
 import torch
 
-class PruningModule:
+class Pruning_module:
     
     def __init__(self, model: si.SIRENSDF, threshold_percentage: float):
         self.model = model
         self.threshold_percentage = threshold_percentage
     
-    # TODO: implement real pruning by removing the neurons and adjusting the weights of the next layer accordingly 
     def prune(self):
 
         total = 0
         layers = self.model.hidden
+        device = self.model.hidden[0].linear.weight.device
 
         for i in range(len(layers)):
 
@@ -40,7 +39,7 @@ class PruningModule:
                 in_features=current.linear.in_features,
                 out_features=len(keep),
                 bias=True
-            )
+            ).to(device)
 
             new_current.weight.data = W[keep, :].clone()
             new_current.bias.data = b[keep].clone()
@@ -59,7 +58,7 @@ class PruningModule:
                     in_features=len(keep),
                     out_features=old_next.out_features,
                     bias=True
-                )
+                ).to(device)
 
                 new_next.weight.data = old_next.weight.data[:, keep].clone()
                 new_next.bias.data = old_next.bias.data.clone()
@@ -75,7 +74,7 @@ class PruningModule:
                     in_features=len(keep),
                     out_features=final.out_features,
                     bias=True
-                )
+                ).to(device)
 
                 new_final.weight.data = final.weight.data[:, keep].clone()
                 new_final.bias.data = final.bias.data.clone()
