@@ -47,7 +47,7 @@ def train(epochs: int, data: np.array, no_surface: int, no_off_surface:int, mode
         optimizer.step()
 
         if step % 10 == 0:
-            if(prune == True and step == 50):
+            if(prune == True and step == 100):
                 added_frequencies = densify(model=model)
                 pruned_neurons = pruning_module.prune()
                 optimizer = torch.optim.Adam(model.parameters(), lr=optimizer.param_groups[0]['lr'])
