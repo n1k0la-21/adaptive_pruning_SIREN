@@ -3,25 +3,26 @@ import torch
 import src.model.SIREN as si
 
 class Loss:
-    def __init__(self, lambda_twd:float, lambda_surface:float, lambda_eikonal:float, lambda_normal:float, normal_present:bool, model: si.SIRENSDF, k: int):
-        self.lambda_surface = lambda_surface
+    def __init__(self, lambda_twd:float, lambda_sdf:float, lambda_surface:float, lambda_eikonal:float, lambda_normal:float, model, k: int):
+        self.lambda_sdf = lambda_sdf
         self.lambda_eikonal = lambda_eikonal
         self.lambda_normal = lambda_normal
-        self.normal_present = normal_present
         self.lambda_twd = lambda_twd
+        self.lambda_surface = lambda_surface
         self.k = k
         self.model = model
     
-    def compute_loss(self, sdf_pred, grad_all, grad_surface, normals):
-        loss = self.lambda_surface * surface_loss(sdf_pred) + self.lambda_eikonal * eikonal_loss(grad_all) + self.lambda_twd * targeted_weight_decay(self.model, self.k)
-        if self.normal_present and normals is not None:
-            loss += self.lambda_normal * normal_loss(gradients=grad_surface, normals=normals)
+    def compute_loss(self, sdf_surface, sdf_true, sdf_pred, grad_all=None, grad_surface=None, normals=None):
+        loss = self.lambda_sdf * sdf_loss(sdf_true, sdf_pred) + self.lambda_surface * surface_loss(sdf_surface)# + self.lambda_eikonal * eikonal_loss(grad_all) # + self.lambda_twd * targeted_weight_decay(self.model, self.k)
 
         return loss
     
-def surface_loss(sdf_pred: torch.Tensor):
-    return (sdf_pred ** 2).mean()
+def sdf_loss(sdf_true: torch.Tensor, sdf_pred: torch.Tensor):
+    return ((sdf_true - sdf_pred) ** 2).mean()
     
+def surface_loss(sdf_surface: torch.Tensor):
+    return (sdf_surface ** 2).mean()    
+
 def eikonal_loss(gradients: torch.Tensor):
     return ((gradients.norm(dim=-1) - 1) ** 2).mean()
     

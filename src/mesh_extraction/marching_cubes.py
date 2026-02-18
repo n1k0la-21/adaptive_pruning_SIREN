@@ -8,7 +8,7 @@ def interpolation(a, b, level):
     b = b - level
     return a / (a - b)
 
-def marching(model: si.SIRENSDF, res: int, level=0.0):
+def marching(model, res: int, level=0.0):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     triangles = list()
     vertices = list()
@@ -26,17 +26,17 @@ def marching(model: si.SIRENSDF, res: int, level=0.0):
                 
                 dots = np.asarray([[x, y, z], # 0. edges: 0-1, 0-2, 0-4
                      [x + step_size, y, z], # 1. edges: 1-5, 1-3
-                     [x, y + step_size, z], # 2. edges: 2-6, 2-3
-                     [x + step_size, y + step_size, z], # 3: edges: 3-7
+                     [x + step_size, y + step_size, z], # 2. edges: 2-6, 2-3
+                     [x, y + step_size, z], # 3: edges: 3-7
                      [x, y, z + step_size], # 4. edges: 4-6, 4-5
                      [x + step_size, y, z + step_size], # 5. edges: 5-6
-                     [x, y + step_size, z + step_size], # 6. edges: 6-7
-                     [x + step_size, y + step_size, z + step_size]] # 7.
+                     [x + step_size, y + step_size, z + step_size], # 6. edges: 6-7
+                     [x, y + step_size, z + step_size]] # 7.
                 )
                 
                 edges = [
-                    (0,1),(1,3),(3,2),(2,0),
-                    (4,5),(5,7),(7,6),(6,4),
+                    (0,1),(1,2),(2,3),(3,0),
+                    (4,5),(5,6),(6,7),(7,4),
                     (0,4),(1,5),(2,6),(3,7)
                     ]
                 

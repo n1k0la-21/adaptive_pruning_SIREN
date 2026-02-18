@@ -5,9 +5,8 @@ import math
 class FirstSineLayer(nn.Module):
     def __init__(self, in_features: int, out_features: int, omega_0: float):
         super().__init__()
-        self.omega = nn.Parameter(
-            torch.ones(out_features) * omega_0
-        )
+        self.omega = omega_0
+        
         self.linear = nn.Linear(in_features, out_features)
         self.init_weights()
 
