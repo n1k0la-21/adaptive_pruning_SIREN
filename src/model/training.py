@@ -28,6 +28,7 @@ def sample_off_surface(surface_points: np.ndarray, epsilon: float, rng: np.rando
 def sample_global(num, rng):
     return rng.uniform(-1, 1, size=(num, 3))
 
+# TODO: try to make loss such that model actually learns zero crossing (from outside to inside)
 def train(epochs: int, data: np.array, no_surface: int, no_off_surface:int, model, loss: loss_module.Loss, optimizer: torch.optim.Adam, scene: o3d.t.geometry.RaycastingScene, mesh: o3d.t.geometry.TriangleMesh, prune=False):
     rng = np.random.default_rng(seed=42)
     epsilon = 0.05
@@ -44,39 +45,62 @@ def train(epochs: int, data: np.array, no_surface: int, no_off_surface:int, mode
         x_surface = sample_surface(mesh=mesh, num=no_surface)
         x_off_surface = sample_off_surface(surface_points=x_surface, epsilon=epsilon, rng=rng)
         x_global = sample_global(no_off_surface, rng)
+        x_global = np.concatenate((x_global, x_off_surface), axis=0)
 
-        # create torch tensors
+        # signed distances for filtering
+        tensor = o3d.core.Tensor(x_global , dtype=o3d.core.Dtype.Float32)
+        global_distances = scene.compute_signed_distance(tensor).numpy()
+
+        # filter points that lie outside/inside
+        x_inside = global_distances < 0
+        x_outside = 0 < global_distances
+
+        # torch tensors as input
         x_surface = torch.from_numpy(x_surface).float().to(device)
-        x_off_surface = torch.from_numpy(x_off_surface).float().to(device)
-        x_global = torch.from_numpy(x_global).float().to(device)
+        x_inside = torch.from_numpy(x_global[x_inside]).float().to(device)
+        x_outside = torch.from_numpy(x_global[x_outside]).float().to(device)
 
-        # concatenate all points
-        x_all = torch.cat([x_surface, x_off_surface, x_global], dim=0)
+        x_all = torch.cat([x_surface, x_inside, x_outside], dim=0)
         x_all.requires_grad_(True)
 
-        # compute sdf
-        sdf_all = model.forward(x_all)
-        # extract sdf from points on surface, near and far away from it
-        sdf_surface = sdf_all[:no_surface]
-        sdf_near = sdf_all[no_surface: 2*no_surface]
-        sdf_global = sdf_all[2*no_surface:]
+        # pred
+        sdf_pred = model(x_all)
+        sdf_surface = sdf_pred[:len(x_surface)]
+        sdf_inside = sdf_pred[len(x_surface): len(x_surface) + len(x_inside)]
+        sdf_outside = sdf_pred[len(x_surface) + len(x_inside):]
+        sdf_off = torch.cat([sdf_inside, sdf_outside], dim=0)
+        sdf_grad = torch.autograd.grad(
+                    outputs=sdf_pred,
+                    inputs=x_all,
+                    grad_outputs=torch.ones_like(sdf_pred),
+                    create_graph=True,
+                    retain_graph=True
+                )[0]
+        sdf_grad = sdf_grad[len(x_surface):]
 
-        # compute ground truth sdf
-        sdf_true = scene.compute_signed_distance(o3d.core.Tensor(x_all.cpu().detach().numpy(), dtype=o3d.core.Dtype.Float32))
+        # true
+        sdf_true = scene.compute_signed_distance(o3d.core.Tensor(x_all[len(x_surface):].cpu().detach().numpy(), dtype=o3d.core.Dtype.Float32))
         sdf_true = torch.from_numpy(sdf_true.numpy()).float().to(device)
-        
-        # precaution
-        sdf_true[:no_surface] = torch.zeros(no_surface)
-        true_surface = sdf_true[:no_surface]
-        true_near = sdf_true[no_surface: 2*no_surface]
-        true_global = sdf_true[2*no_surface:]
+
+        true_inside = sdf_true[:len(x_inside)]
+        true_inside = torch.clamp(true_inside, -0.5, 0.5)
+        true_outside = sdf_true[len(x_inside):]
+        true_outside = torch.clamp(true_outside, -0.5, 0.5)
+
+        true_off = torch.cat([true_inside, true_outside], dim=0)
+
+
 
         # compute loss
-        loss_surface = ((sdf_surface - true_surface)**2).mean()
-        loss_near = ((sdf_near - true_near)**2).mean()
-        loss_global = ((sdf_global - true_global)**2).mean()
+        loss_surface = ((sdf_surface)**2).mean()
+        loss_inside = ((sdf_inside - true_inside)**2).mean()
+        loss_outside = ((sdf_outside - true_outside)**2).mean()
+        loss_off = ((sdf_off - true_off)**2).mean()
 
-        current_loss = 20.0 * loss_surface + 2.0 * loss_near + 0.5 * loss_global
+        # eikonal
+        loss_eikonal = ((sdf_grad.norm(dim=-1) - 1) ** 2).mean()
+
+        current_loss = 5.0 * loss_surface + loss_inside + loss_outside + 0.1 * loss_eikonal
 
         optimizer.zero_grad()
         current_loss.backward()
