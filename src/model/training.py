@@ -8,10 +8,8 @@ import open3d as o3d
 
 
 
-def sample_surface(mesh: o3d.t.geometry.TriangleMesh, num: int):
-    legacy_mesh = mesh.to_legacy()
-    
-    pcd = legacy_mesh.sample_points_uniformly(number_of_points=num)
+def sample_surface(mesh: o3d.t.geometry.TriangleMesh, num: int):    
+    pcd = mesh.sample_points_uniformly(number_of_points=num)
     
     surface_points = np.asarray(pcd.points)
     
