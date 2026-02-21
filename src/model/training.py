@@ -5,31 +5,46 @@ import numpy as np
 import src.model.pruning_module as pm
 from src.model.densification_module import densify
 import open3d as o3d
-
-
-
-def sample_surface(mesh: o3d.t.geometry.TriangleMesh, num: int):    
-    pcd = mesh.sample_points_uniformly(number_of_points=num)
-    
-    surface_points = np.asarray(pcd.points)
-    
-    return surface_points
-
-def sample_off_surface(surface_points: np.ndarray, epsilon: float, rng: np.random.Generator):
-    # Random perturbation in each axis between -epsilon and +epsilon
-    offsets = rng.uniform(-epsilon, epsilon, size=surface_points.shape)
-    
-    off_surface_points = surface_points + offsets
-    
-    return off_surface_points
+from src.data.dataset import MeshDataset 
 
 def sample_global(num, rng):
     return rng.uniform(-1, 1, size=(num, 3))
 
+def normal_constraint(pred_sdf, coords, gt_normals, on_surface_mask):
+    # Only compute for on-surface points
+    if on_surface_mask.sum() == 0:
+        return torch.tensor(0.0, device=pred_sdf.device)
+
+    surface_coords = coords[on_surface_mask]
+    surface_normals = gt_normals[on_surface_mask]
+
+    # Compute gradient of SDF w.r.t input coordinates
+    sdf_grad = torch.autograd.grad(
+        outputs=pred_sdf,
+        inputs=coords,
+        grad_outputs=torch.ones_like(pred_sdf),
+        create_graph=True,
+        retain_graph=True
+    )[0]
+
+    # slice gradients only for surface points
+    gradients = sdf_grad[on_surface_mask]
+
+    # Normalize gradients
+    grad_norm = gradients / (gradients.norm(dim=-1, keepdim=True) + 1e-8)
+    gt_normals = surface_normals / (surface_normals.norm(dim=-1, keepdim=True) + 1e-8)
+
+    # Cosine similarity: 1 if aligned, -1 if opposite
+    cos_sim = (grad_norm * gt_normals).sum(dim=-1, keepdim=True)  # (N,1)
+
+    # Loss: 1 - cos(similarity)
+    loss = (1 - cos_sim).mean()
+
+    return loss
+
 # TODO: try to make loss such that model actually learns zero crossing (from outside to inside)
-def train(epochs: int, data: np.array, no_surface: int, no_off_surface:int, model, loss: loss_module.Loss, optimizer: torch.optim.Adam, scene: o3d.t.geometry.RaycastingScene, mesh: o3d.t.geometry.TriangleMesh, prune=False):
+def train(epochs: int, data: MeshDataset, no_surface: int, no_off_surface:int, model, loss: loss_module.Loss, optimizer: torch.optim.Adam, scene: o3d.t.geometry.RaycastingScene, prune=False):
     rng = np.random.default_rng(seed=42)
-    epsilon = 0.05
     pruning_module = None
     
     if prune == True:
@@ -40,9 +55,10 @@ def train(epochs: int, data: np.array, no_surface: int, no_off_surface:int, mode
     model.to(device)
 
     for step in range(epochs):
-        x_surface = sample_surface(mesh=mesh, num=no_surface)
-        x_off_surface = sample_off_surface(surface_points=x_surface, epsilon=epsilon, rng=rng)
-        x_global = sample_global(no_off_surface, rng)
+        rng = np.random.default_rng(seed=42 + step)
+        x_surface = data.sample_surface_points(no_surface, rng=rng) # not reproducible right now because o3d sampler does not have a fixed seed
+        x_off_surface = data.sample_close_to_surface(num_points=int(no_off_surface/2), rng=rng)
+        x_global = sample_global(int(no_off_surface/2), rng)
         x_global = np.concatenate((x_global, x_off_surface), axis=0)
 
         # signed distances for filtering
@@ -74,31 +90,43 @@ def train(epochs: int, data: np.array, no_surface: int, no_off_surface:int, mode
                     create_graph=True,
                     retain_graph=True
                 )[0]
-        sdf_grad = sdf_grad[len(x_surface):]
 
         # true
         sdf_true = scene.compute_signed_distance(o3d.core.Tensor(x_all[len(x_surface):].cpu().detach().numpy(), dtype=o3d.core.Dtype.Float32))
         sdf_true = torch.from_numpy(sdf_true.numpy()).float().to(device)
 
-        true_inside = sdf_true[:len(x_inside)]
-        true_inside = torch.clamp(true_inside, -0.5, 0.5)
-        true_outside = sdf_true[len(x_inside):]
-        true_outside = torch.clamp(true_outside, -0.5, 0.5)
+        on_surface_mask = torch.zeros(len(x_all), dtype=torch.bool, device=x_all.device)
+        on_surface_mask[:len(x_surface)] = True  # first batch points are surface
 
-        true_off = torch.cat([true_inside, true_outside], dim=0)
+        x_surface_np = x_surface.detach().cpu().numpy()
+        x_surface_normals = torch.from_numpy(data.sample_surface_normals(x_surface_np)).float().to(device)
 
+        # Dummy normals for off-surface points
+        x_outside_normals = torch.zeros_like(x_outside)
+        x_inside_normals = torch.zeros_like(x_inside)
 
+        loss_normal = normal_constraint(
+            pred_sdf=sdf_pred,
+            coords=x_all,
+            gt_normals=torch.cat([x_surface_normals, x_outside_normals, x_inside_normals], dim=0),
+            on_surface_mask=on_surface_mask
+        )
 
         # compute loss
         loss_surface = ((sdf_surface)**2).mean()
-        loss_inside = ((sdf_inside - true_inside)**2).mean()
-        loss_outside = ((sdf_outside - true_outside)**2).mean()
-        loss_off = ((sdf_off - true_off)**2).mean()
+
+        loss_sign = (
+            torch.relu(sdf_inside).mean() +      # inside should be negative
+            torch.relu(-sdf_outside).mean()      # outside should be positive
+        )
+
+        # Inter constraint (push away from zero off-surface)
+        loss_inter = torch.exp(-100 * torch.abs(sdf_off)).mean()
 
         # eikonal
         loss_eikonal = ((sdf_grad.norm(dim=-1) - 1) ** 2).mean()
 
-        current_loss = 5.0 * loss_surface + loss_inside + loss_outside + 0.1 * loss_eikonal
+        current_loss = 150 * loss_surface + 1.5 * loss_sign + 0.5 * loss_inter + 0.5 * loss_eikonal + 1.5 * loss_normal
 
         optimizer.zero_grad()
         current_loss.backward()

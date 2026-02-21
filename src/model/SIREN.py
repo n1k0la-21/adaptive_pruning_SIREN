@@ -5,7 +5,9 @@ import math
 class FirstSineLayer(nn.Module):
     def __init__(self, in_features: int, out_features: int, omega_0: float):
         super().__init__()
-        self.omega = omega_0
+        self.omega_0 = omega_0
+        # make frequencies learnable
+        self.omega_scale = nn.Parameter(torch.zeros(out_features))
         
         self.linear = nn.Linear(in_features, out_features)
         self.init_weights()
@@ -17,7 +19,9 @@ class FirstSineLayer(nn.Module):
             self.linear.bias.uniform_(-bound, bound)
 
     def forward(self, x: torch.Tensor):
-        return torch.sin(self.omega * self.linear(x)) # forward: sin(omega_0 * (W_T * x + bias))
+        # only positive frequencies
+        scale = torch.exp(self.omega_scale)
+        return torch.sin(scale * self.omega_0 * self.linear(x)) # forward: sin(omega_0 * (W_T * x + bias))
     
 
     

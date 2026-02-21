@@ -9,7 +9,7 @@ class SimpleSDF(nn.Module):
         layers = []
         last_dim = in_dim
 
-        for _ in range(num_layers):
+        for i in range(num_layers):
             layers.append(nn.Linear(last_dim, hidden_dim))
             layers.append(nn.ReLU(inplace=True))
             last_dim = hidden_dim
