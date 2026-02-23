@@ -10,39 +10,6 @@ from src.data.dataset import MeshDataset
 def sample_global(num, rng):
     return rng.uniform(-1, 1, size=(num, 3))
 
-def normal_constraint(pred_sdf, coords, gt_normals, on_surface_mask):
-    # Only compute for on-surface points
-    if on_surface_mask.sum() == 0:
-        return torch.tensor(0.0, device=pred_sdf.device)
-
-    surface_coords = coords[on_surface_mask]
-    surface_normals = gt_normals[on_surface_mask]
-
-    # Compute gradient of SDF w.r.t input coordinates
-    sdf_grad = torch.autograd.grad(
-        outputs=pred_sdf,
-        inputs=coords,
-        grad_outputs=torch.ones_like(pred_sdf),
-        create_graph=True,
-        retain_graph=True
-    )[0]
-
-    # slice gradients only for surface points
-    gradients = sdf_grad[on_surface_mask]
-
-    # Normalize gradients
-    grad_norm = gradients / (gradients.norm(dim=-1, keepdim=True) + 1e-8)
-    gt_normals = surface_normals / (surface_normals.norm(dim=-1, keepdim=True) + 1e-8)
-
-    # Cosine similarity: 1 if aligned, -1 if opposite
-    cos_sim = (grad_norm * gt_normals).sum(dim=-1, keepdim=True)  # (N,1)
-
-    # Loss: 1 - cos(similarity)
-    loss = (1 - cos_sim).mean()
-
-    return loss
-
-# TODO: try to make loss such that model actually learns zero crossing (from outside to inside)
 def train(epochs: int, data: MeshDataset, no_surface: int, no_off_surface:int, model, loss: loss_module.Loss, optimizer: torch.optim.Adam, scene: o3d.t.geometry.RaycastingScene, prune=False):
     rng = np.random.default_rng(seed=42)
     pruning_module = None
@@ -91,10 +58,6 @@ def train(epochs: int, data: MeshDataset, no_surface: int, no_off_surface:int, m
                     retain_graph=True
                 )[0]
 
-        # true
-        sdf_true = scene.compute_signed_distance(o3d.core.Tensor(x_all[len(x_surface):].cpu().detach().numpy(), dtype=o3d.core.Dtype.Float32))
-        sdf_true = torch.from_numpy(sdf_true.numpy()).float().to(device)
-
         on_surface_mask = torch.zeros(len(x_all), dtype=torch.bool, device=x_all.device)
         on_surface_mask[:len(x_surface)] = True  # first batch points are surface
 
@@ -105,28 +68,10 @@ def train(epochs: int, data: MeshDataset, no_surface: int, no_off_surface:int, m
         x_outside_normals = torch.zeros_like(x_outside)
         x_inside_normals = torch.zeros_like(x_inside)
 
-        loss_normal = normal_constraint(
-            pred_sdf=sdf_pred,
-            coords=x_all,
-            gt_normals=torch.cat([x_surface_normals, x_outside_normals, x_inside_normals], dim=0),
-            on_surface_mask=on_surface_mask
-        )
+        normals = torch.cat([x_surface_normals, x_outside_normals, x_inside_normals], dim=0)
 
-        # compute loss
-        loss_surface = ((sdf_surface)**2).mean()
-
-        loss_sign = (
-            torch.relu(sdf_inside).mean() +      # inside should be negative
-            torch.relu(-sdf_outside).mean()      # outside should be positive
-        )
-
-        # Inter constraint (push away from zero off-surface)
-        loss_inter = torch.exp(-100 * torch.abs(sdf_off)).mean()
-
-        # eikonal
-        loss_eikonal = ((sdf_grad.norm(dim=-1) - 1) ** 2).mean()
-
-        current_loss = 150 * loss_surface + 1.5 * loss_sign + 0.5 * loss_inter + 0.5 * loss_eikonal + 1.5 * loss_normal
+        current_loss = loss.compute_loss(input=x_all, pred=sdf_pred, pred_surface=sdf_surface, pred_inside=sdf_inside, 
+                                         pred_outside=sdf_outside, pred_off=sdf_off, normals=normals, surface_mask=on_surface_mask, sdf_grad=sdf_grad)
 
         optimizer.zero_grad()
         current_loss.backward()

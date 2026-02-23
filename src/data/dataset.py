@@ -4,7 +4,6 @@ import numpy as np
 class MeshDataset:
     def __init__(self, mesh_path):
         self.mesh = o3d.io.read_triangle_mesh(mesh_path)
-        # Convert vertices to numpy
         v = np.asarray(self.mesh.vertices)
 
         vmin = v.min(0)
@@ -14,13 +13,11 @@ class MeshDataset:
         extent = (vmax - vmin)
         scale = extent.max() / 2.0
 
-        # normalize
         v = (v - center) / scale
 
         # assign back
         self.mesh.vertices = o3d.utility.Vector3dVector(v)
 
-        # Convert to tensor mesh for raycasting
         tmesh = o3d.t.geometry.TriangleMesh.from_legacy(self.mesh)
 
         self.scene = o3d.t.geometry.RaycastingScene()
@@ -34,11 +31,11 @@ class MeshDataset:
         mask = self.l_mag > np.percentile(self.l_mag, 70) 
         self.biased = self.vertices[mask] # extract top 30%
 
-    
+    # TODO: think about how the ratio of biased/unbiased points should be in general
     def sample_surface_points(self, num_points, rng: np.random.Generator) -> np.ndarray:
         # Sample points uniformly on the mesh surface
-        pcd = np.asarray(self.mesh.sample_points_uniformly(number_of_points=int(num_points/2)).points)
-        idx = rng.choice(len(self.biased), size=int(num_points/2))
+        pcd = np.asarray(self.mesh.sample_points_uniformly(number_of_points=int(2*num_points/3)).points)
+        idx = rng.choice(len(self.biased), size=int(num_points/3))
         samples = np.concatenate([pcd, self.biased[idx]], axis=0)
         return samples
     
@@ -48,7 +45,7 @@ class MeshDataset:
         surface_sample = np.asarray(self.mesh.sample_points_uniformly(number_of_points=num_points).points)
         surface_sample += rng.uniform(-0.005, 0.005, size=surface_sample.shape)
 
-        k = int(num_points * 0.4)
+        k = int(num_points/3)
 
         if len(sharp_sample) <= k:
             biased = sharp_sample
