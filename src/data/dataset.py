@@ -3,6 +3,7 @@ import numpy as np
 
 class MeshDataset:
     def __init__(self, mesh_path):
+        o3d.utility.random.seed(42)
         self.mesh = o3d.io.read_triangle_mesh(mesh_path)
         v = np.asarray(self.mesh.vertices)
 
@@ -31,10 +32,12 @@ class MeshDataset:
         mask = self.l_mag > np.percentile(self.l_mag, 70) 
         self.biased = self.vertices[mask] # extract top 30%
 
+        self.surface_points = np.asarray(self.mesh.sample_points_uniformly(number_of_points=1000000).points)
+
     # TODO: think about how the ratio of biased/unbiased points should be in general
     def sample_surface_points(self, num_points, rng: np.random.Generator) -> np.ndarray:
         # Sample points uniformly on the mesh surface
-        pcd = np.asarray(self.mesh.sample_points_uniformly(number_of_points=int(2*num_points/3)).points)
+        pcd = rng.choice(self.surface_points, size=int(2*num_points/3))
         idx = rng.choice(len(self.biased), size=int(num_points/3))
         samples = np.concatenate([pcd, self.biased[idx]], axis=0)
         return samples

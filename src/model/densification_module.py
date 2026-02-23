@@ -17,7 +17,7 @@ def densify(model: si.SIRENSDF):
 
         # expand embedding layer with double the frequency of important outputs
 
-        omegas = first.omega
+        omegas = first.omega_scale
         frequencies = omegas[important] * 2
 
         new_freq = torch.cat([frequencies, omegas])
@@ -29,7 +29,7 @@ def densify(model: si.SIRENSDF):
             bias=True
         ).to(device)
 
-        first.omega = torch.nn.Parameter(new_freq.to(device))
+        first.omega_scale = torch.nn.Parameter(new_freq.to(device))
 
         # initialized using the vanilla SIREN procedure
         bound = 1 / new_linear.in_features

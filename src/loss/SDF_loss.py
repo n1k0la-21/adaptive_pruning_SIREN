@@ -3,7 +3,7 @@ import torch
 import src.model.SIREN as si
 
 class Loss:
-    def __init__(self, lambda_twd:float, lambda_surface:float, lambda_eikonal:float, lambda_normal:float, model, k: int, lambda_inter: float, lambda_sign: float):
+    def __init__(self, lambda_twd:float, lambda_surface:float, lambda_eikonal:float, lambda_normal:float, model, k: int, lambda_inter: float, lambda_sign: float, pruning_module=None):
         self.lambda_eikonal = lambda_eikonal
         self.lambda_normal = lambda_normal
         self.lambda_twd = lambda_twd
@@ -11,6 +11,7 @@ class Loss:
         self.lambda_inter = lambda_inter
         self.lambda_sign = lambda_sign
         self.k = k
+        self.pruning_module = pruning_module
         self.model = model
     
     #TODO: add regularization terms
@@ -28,6 +29,9 @@ class Loss:
         loss_eikonal = self.lambda_eikonal * eikonal_loss(gradients=sdf_grad)
 
         total_loss = loss_normal + loss_surface + loss_sign + loss_inter + loss_eikonal
+
+        if self.pruning_module != None:
+            total_loss += self.lambda_twd * self.pruning_module.reg_term()
         return total_loss
     
 def surface_loss(sdf_surface: torch.Tensor):

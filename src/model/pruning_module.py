@@ -1,13 +1,13 @@
 import src.model.SIREN as si
 import torch
-import numpy as np
 
 class AIRe():
     
-    def __init__(self, model, threshold_percentage: float):
+    def __init__(self, model, threshold_percentage: float, k):
         self.model = model
         self.threshold_percentage = threshold_percentage
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.k = k
     
     def prune(self):
 
@@ -51,7 +51,7 @@ class AIRe():
             total += mask.sum().item()
         return total
     
-    def reg_term(self, k: int):
+    def reg_term(self):
 
         penalty = 0.0
 
@@ -61,18 +61,19 @@ class AIRe():
                 W = module.weight
                 col_norms = torch.sum(torch.abs(W), dim=0)
             
-                indices = torch.topk(-col_norms, k).indices
+                indices = torch.topk(-col_norms, self.k).indices
                 penalty += torch.sum(col_norms[indices])
 
         return penalty
 
 class DepGraph():
-    def __init__(self, model, threshold):
+    def __init__(self, model, threshold_percentage, k):
         self.model = model
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.threshold = threshold
+        self.threshold = threshold_percentage
+        self.k = k
 
-    def prune(self, k: int):
+    def prune(self):
         device = self.device
         total = 0
         layers = self.model.hidden
@@ -84,7 +85,7 @@ class DepGraph():
                 current = current.linear
 
             current_importance = importance[i] # relationship between out_dim of this layer and in_dim of the next
-            k = min(k, len(current_importance)) # safety measure
+            k = min(self.k, len(current_importance)) # safety measure
             topk_vals = torch.topk(current_importance, k=k).values
             relative_importance = k * current_importance / torch.sum(topk_vals)
 
@@ -128,16 +129,16 @@ class DepGraph():
             importance = out_dim_norm + in_dim_norm
             importance_list.append(importance)
 
-        #importance = torch.cat(importance_list)
-
-        #k_max = torch.max(importance)
-        #k_min = torch.min(importance)
-        #lambda_k = 2**(4 * (k_max - importance)/(k_max - k_min))
-
         return importance_list
     
     def reg_term(self):
-        importance, lambda_k = self.importance()
+        importance_list = self.importance()
+        importance = torch.cat(importance_list)
+
+        k_max = torch.max(importance)
+        k_min = torch.min(importance)
+        lambda_k = 2**(4 * (k_max - importance)/(k_max - k_min))
+
         return torch.sum(lambda_k * importance)
 
 def update(model, layer_idx: int, keep):
