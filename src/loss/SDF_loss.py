@@ -3,18 +3,17 @@ import torch
 import src.model.SIREN as si
 
 class Loss:
-    def __init__(self, lambda_twd:float, lambda_surface:float, lambda_eikonal:float, lambda_normal:float, model, k: int, lambda_inter: float, lambda_sign: float, pruning_module=None):
+    def __init__(self, lambda_twd:float, lambda_surface:float, lambda_eikonal:float, lambda_normal:float, model, lambda_inter: float, lambda_sign: float, pruning_module=None):
         self.lambda_eikonal = lambda_eikonal
         self.lambda_normal = lambda_normal
         self.lambda_twd = lambda_twd
         self.lambda_surface = lambda_surface
         self.lambda_inter = lambda_inter
         self.lambda_sign = lambda_sign
-        self.k = k
         self.pruning_module = pruning_module
         self.model = model
+        self.prune = True # can be switched through training after pruning is done to make model learn normally
     
-    #TODO: add regularization terms
     def compute_loss(self, input, pred, pred_surface, pred_inside, pred_outside, pred_off, sdf_grad, normals, surface_mask):
         loss_normal = self.lambda_normal * normal_loss(
             pred_sdf=pred,
@@ -30,7 +29,7 @@ class Loss:
 
         total_loss = loss_normal + loss_surface + loss_sign + loss_inter + loss_eikonal
 
-        if self.pruning_module != None:
+        if self.pruning_module != None and self.prune == True:
             total_loss += self.lambda_twd * self.pruning_module.reg_term()
         return total_loss
     

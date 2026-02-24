@@ -10,13 +10,8 @@ from src.data.dataset import MeshDataset
 def sample_global(num, rng):
     return rng.uniform(-1, 1, size=(num, 3))
 
-def train(epochs: int, data: MeshDataset, no_surface: int, no_off_surface:int, model, loss: loss_module.Loss, optimizer: torch.optim.Adam, scene: o3d.t.geometry.RaycastingScene, prune=False):
+def train(epochs: int, data: MeshDataset, no_surface: int, no_off_surface:int, model, loss: loss_module.Loss, optimizer: torch.optim.Adam, scene: o3d.t.geometry.RaycastingScene, pruning_module=None, densification=False):
     rng = np.random.default_rng(seed=42)
-    pruning_module = None
-    
-    if prune == True:
-        pruning_module = pm.Pruning_module(model=model, threshold_percentage=0.2)
-    
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
@@ -78,12 +73,17 @@ def train(epochs: int, data: MeshDataset, no_surface: int, no_off_surface:int, m
         optimizer.step()
 
         if step % 10 == 0:
-            if(prune == True and step == 100):
+            if(densification == True and step == 200):
                 added_frequencies = densify(model=model)
+                optimizer = torch.optim.Adam(model.parameters(), lr=optimizer.param_groups[0]['lr'])
+                print(f"Added {len(added_frequencies)} frequencies to the embedding layer.")
+
+            if(pruning_module != None and step == 250):
                 pruned_neurons = pruning_module.prune()
+                loss.prune = False
                 optimizer = torch.optim.Adam(model.parameters(), lr=optimizer.param_groups[0]['lr'])
                 print(f"Pruned {pruned_neurons} neurons.")
-                print(f"Added {len(added_frequencies)} frequencies to the embedding layer.")
+                
             print(f"Step {step} | Loss {current_loss.item()}")
             
 

@@ -77,14 +77,16 @@ class DepGraph():
         device = self.device
         total = 0
         layers = self.model.hidden
-        importance, _ = self.importance()
 
-        for i in range(len(layers)):
+        for i in range(1, len(layers)): # skip embedding layer (should only be able to grow)
             current = layers[i]
-            if not isinstance(current, torch.nn.Linear):
-                current = current.linear
+            next = None
+            if i < len(layers) - 1:
+                next = layers[i + 1].linear
+            else:
+                next = self.model.final
 
-            current_importance = importance[i] # relationship between out_dim of this layer and in_dim of the next
+            current_importance = self.importance(current.linear, next) # relationship between out_dim of this layer and in_dim of the next
             k = min(self.k, len(current_importance)) # safety measure
             topk_vals = torch.topk(current_importance, k=k).values
             relative_importance = k * current_importance / torch.sum(topk_vals)
@@ -109,30 +111,34 @@ class DepGraph():
 
         return total
     
-    def importance(self):
-        layers = self.model.hidden
-        importance_list = []
+    def importance(self, current, next):
+        W_out = current.weight
+        W_in = next.weight 
 
-        for l in range(len(layers) - 1):
-            W_out = layers[l].linear.weight
-            W_in = None  
-            if l < len(layers) - 1:
-                W_in = layers[l+1].linear.weight
-            else:
-                W_in = self.model.final.weight 
-
-            # Compute squared norms
-            out_dim_norm = torch.sum(W_out**2, dim=0)  # per neuron in current layer
-            in_dim_norm = torch.sum(W_in**2, dim=1)    # per neuron in current layer
+        # Compute squared norms
+        out_dim_norm = torch.sum(W_out**2, dim=1)  # per neuron in current layer
+        in_dim_norm = torch.sum(W_in**2, dim=0)    # per neuron in current layer
 
             # Importance per neuron
-            importance = out_dim_norm + in_dim_norm
-            importance_list.append(importance)
-
-        return importance_list
+        importance = out_dim_norm + in_dim_norm
+        
+        return importance
     
     def reg_term(self):
-        importance_list = self.importance()
+        importance_list = []
+        layers = self.model.hidden
+        
+        for i in range(1, len(layers)):
+            current = layers[i].linear
+            next = None
+            if i < len(layers) - 1:
+                next = layers[i + 1].linear
+            else:
+                next = self.model.final
+            
+            to_append = self.importance(current, next)
+            importance_list.append(to_append)
+            
         importance = torch.cat(importance_list)
 
         k_max = torch.max(importance)

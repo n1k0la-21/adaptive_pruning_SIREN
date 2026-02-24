@@ -2,11 +2,13 @@ import torch
 import torch.nn as nn
 import math
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 class FirstSineLayer(nn.Module):
     def __init__(self, in_features: int, out_features: int, omega_0: float):
         super().__init__()
         self.omega_0 = omega_0
-        # make frequencies learnable
+        # make 1D tensor to be able to append new frequencies
         self.omega_scale = nn.Parameter(torch.zeros(out_features))
         
         self.linear = nn.Linear(in_features, out_features)
@@ -85,3 +87,31 @@ class SIRENSDF(nn.Module):
         # final layer
         final_neurons = model.final.out_features
         print(f"Final layer    : {final_neurons:4d} neurons")
+
+def weight_stats(model):
+    print("Weight statistics per layer:")
+    print("-" * 60)
+
+    for i, layer in enumerate(model.hidden):
+        if hasattr(layer, "linear"):
+            w = layer.linear.weight.data
+            b = layer.linear.bias.data
+
+            print(f"Hidden layer {i:2d}")
+            print(f"  Weight: mean={w.mean():.4e}, std={w.std():.4e}, min={w.min():.4e}, max={w.max():.4e}")
+            print(f"  Bias  : mean={b.mean():.4e}, std={b.std():.4e}, min={b.min():.4e}, max={b.max():.4e}")
+
+            # special case: First layer frequency params
+            if hasattr(layer, "omega_scale"):
+                scale = torch.exp(layer.omega_scale.data)
+                print(f"  Omega scale (exp): mean={scale.mean():.4e}, std={scale.std():.4e}")
+
+            print("-" * 60)
+
+    # final layer
+    w = model.final.weight.data
+    b = model.final.bias.data
+
+    print("Final layer")
+    print(f"  Weight: mean={w.mean():.4e}, std={w.std():.4e}, min={w.min():.4e}, max={w.max():.4e}")
+    print(f"  Bias  : mean={b.mean():.4e}, std={b.std():.4e}, min={b.min():.4e}, max={b.max():.4e}")
