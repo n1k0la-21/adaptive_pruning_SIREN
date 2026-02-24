@@ -12,6 +12,7 @@ def sample_global(num, rng):
 
 def train(epochs: int, data: MeshDataset, no_surface: int, no_off_surface:int, model, loss: loss_module.Loss, optimizer: torch.optim.Adam, scene: o3d.t.geometry.RaycastingScene, pruning_module=None, densification=False):
     rng = np.random.default_rng(seed=42)
+    o3d.utility.random.seed(42)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
@@ -36,7 +37,7 @@ def train(epochs: int, data: MeshDataset, no_surface: int, no_off_surface:int, m
         x_inside = torch.from_numpy(x_global[x_inside]).float().to(device)
         x_outside = torch.from_numpy(x_global[x_outside]).float().to(device)
 
-        x_all = torch.cat([x_surface, x_inside, x_outside], dim=0)
+        x_all = torch.cat([x_surface, x_inside, x_outside], dim=0)        
         x_all.requires_grad_(True)
 
         # pred
