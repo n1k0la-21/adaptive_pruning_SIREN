@@ -3,18 +3,18 @@ import torch
 import src.model.SIREN as si
 
 class Loss:
-    def __init__(self, lambda_twd:float, lambda_surface:float, lambda_eikonal:float, lambda_normal:float, model, lambda_inter: float, lambda_sign: float, pruning_module=None):
+    def __init__(self, lambda_twd:float, lambda_surface:float, lambda_eikonal:float, lambda_normal:float, model, lambda_inter: float, lambda_off: float, pruning_module=None):
         self.lambda_eikonal = lambda_eikonal
         self.lambda_normal = lambda_normal
         self.lambda_twd = lambda_twd
         self.lambda_surface = lambda_surface
         self.lambda_inter = lambda_inter
-        self.lambda_sign = lambda_sign
+        self.lambda_off = lambda_off
         self.pruning_module = pruning_module
         self.model = model
         self.prune = True # can be switched through training after pruning is done to make model learn normally
     
-    def compute_loss(self, input, pred, pred_surface, pred_inside, pred_outside, pred_off, sdf_grad, normals, surface_mask):
+    def compute_loss(self, input, pred, pred_surface, pred_inside, pred_outside, pred_off, sdf_grad, normals, surface_mask, true_inside, true_outside):
         loss_normal = self.lambda_normal * normal_loss(
             pred_sdf=pred,
             coords=input,
@@ -23,11 +23,11 @@ class Loss:
         )
 
         loss_surface = self.lambda_surface * surface_loss(sdf_surface=pred_surface)
-        loss_sign = self.lambda_sign * sign_loss(sdf_inside=pred_inside, sdf_outside=pred_outside)
+        loss_off = self.lambda_off * off_surface_loss(sdf_inside=pred_inside, sdf_outside=pred_outside, true_inside=true_inside, true_outside=true_outside)
         loss_inter = self.lambda_inter * interior_loss(sdf_off=pred_off)
         loss_eikonal = self.lambda_eikonal * eikonal_loss(gradients=sdf_grad)
 
-        total_loss = loss_normal + loss_surface + loss_sign + loss_inter + loss_eikonal
+        total_loss = loss_normal + loss_surface + loss_off + loss_inter + loss_eikonal
 
         if self.pruning_module != None and self.prune == True:
             total_loss += self.lambda_twd * self.pruning_module.reg_term()
@@ -70,8 +70,10 @@ def normal_loss(pred_sdf, coords, gt_normals, on_surface_mask):
 
     return loss
 
-def sign_loss(sdf_inside, sdf_outside):
-    return torch.relu(sdf_inside).mean() + torch.relu(-sdf_outside).mean()
+def off_surface_loss(sdf_inside, sdf_outside, true_inside, true_outside):
+    inside = ((true_inside - sdf_inside)**2).mean()
+    outside = ((true_outside - sdf_outside)**2).mean()
+    return inside + outside
     
 def interior_loss(sdf_off):
     return torch.exp(-100 * torch.abs(sdf_off)).mean()

@@ -32,6 +32,15 @@ class MeshDataset:
         mask = self.l_mag > np.percentile(self.l_mag, 70) 
         self.biased = self.vertices[mask] # extract top 30%
 
+        if not hasattr(self, 'vertex_normals'):
+            self.mesh.compute_vertex_normals()
+            self.vertex_normals = np.asarray(self.mesh.vertex_normals)
+
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = self.mesh.vertices
+        pcd.normals = self.mesh.vertex_normals
+        self.kdtree = o3d.geometry.KDTreeFlann(pcd)
+
     # TODO: think about how the ratio of biased/unbiased points should be in general
     def sample_surface_points(self, num_points, rng: np.random.Generator) -> np.ndarray:
         # Sample points uniformly on the mesh surface
@@ -71,20 +80,12 @@ class MeshDataset:
 
     def sample_surface_normals(self, points: np.ndarray) -> np.ndarray:
         # Compute vertex normals if not already computed
-        if not hasattr(self, 'vertex_normals'):
-            self.mesh.compute_vertex_normals()
-            self.vertex_normals = np.asarray(self.mesh.vertex_normals)
-
-        # Build Open3D KDTree for vertex lookup
-        pcd = o3d.geometry.PointCloud()
-        pcd.points = self.mesh.vertices
-        pcd.normals = self.mesh.vertex_normals  # already computed
-        kdtree = o3d.geometry.KDTreeFlann(pcd)
+        
 
         sampled_normals = []
         for pt in points:
-            [_, idx, _] = kdtree.search_knn_vector_3d(o3d.utility.Vector3dVector([pt])[0], 1)
-            sampled_normals.append(self.vertex_normals[idx[0]])
+            [_, idx, _] = self.kdtree.search_knn_vector_3d(o3d.utility.Vector3dVector([pt])[0], 1)
+            sampled_normals.append(self.mesh.vertex_normals[idx[0]])
 
         return np.array(sampled_normals)
             
