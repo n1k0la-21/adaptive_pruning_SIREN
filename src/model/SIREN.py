@@ -9,7 +9,7 @@ class FirstSineLayer(nn.Module):
         super().__init__()
         self.omega_0 = omega_0
         # make 1D tensor to be able to append new frequencies
-        self.omega_scale = nn.Parameter(torch.zeros(out_features))
+        self.omega_scale = torch.ones(out_features).to(device)
         
         self.linear = nn.Linear(in_features, out_features)
         self.init_weights()

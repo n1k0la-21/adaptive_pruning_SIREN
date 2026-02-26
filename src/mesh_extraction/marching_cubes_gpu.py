@@ -4,15 +4,12 @@ from src.mesh_extraction.lookup_table import tri_table
 import src.model.SIREN as si
 
 def interpolation(a, b, level):
-    """Linear interpolation along edge for the isosurface crossing."""
     a = a - level
     b = b - level
     return a / (a - b + 1e-8)  # add epsilon to avoid division by zero
 
 def marching(model, res: int, level=0.0, chunk_size=65536):
-    """
-    Marching Cubes using Open3D RaycastingScene SDF, with dictionary-based deduplication.
-    """
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # 1️⃣ Generate coordinate grid
@@ -52,7 +49,7 @@ def marching(model, res: int, level=0.0, chunk_size=65536):
         voxel_corner_points = grid_points[voxel_corner_indices]
 
         # Evaluate SDF
-        flat_points = voxel_corner_points.reshape(-1,3)
+        flat_points = voxel_corner_points.reshape(-1,3).to(device)
         sdf_flat = model(flat_points)
         voxel_sdf = sdf_flat.reshape(voxel_corner_points.shape[:2]).to(device)
 

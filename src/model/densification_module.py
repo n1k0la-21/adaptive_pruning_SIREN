@@ -29,7 +29,7 @@ def densify(model: si.SIRENSDF):
             bias=True
         ).to(device)
 
-        first.omega_scale = torch.nn.Parameter(new_freq)
+        first.omega_scale = new_freq
 
         # initialized using the vanilla SIREN procedure
         bound = 1 / new_linear.in_features
