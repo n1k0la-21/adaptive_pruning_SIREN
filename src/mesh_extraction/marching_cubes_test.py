@@ -15,12 +15,12 @@ def marching(scene: o3d.t.geometry.RaycastingScene, res: int, level=0.0, chunk_s
     """
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # 1️⃣ Generate coordinate grid
+    # Generate coordinate grid
     lin = torch.linspace(-1, 1, steps=res, device=device)
     xxx, yyy, zzz = torch.meshgrid(lin, lin, lin, indexing='ij')
     grid_points = torch.stack([xxx, yyy, zzz], dim=-1).reshape(-1,3)
 
-    # 2️⃣ Corner offsets and edge pairs
+    # Corner offsets and edge pairs
     corner_offsets = torch.tensor([
         0, 1, 1+res, 0+res,
         res*res, res*res+1, res*res+1+res, res*res+0+res
@@ -31,7 +31,7 @@ def marching(scene: o3d.t.geometry.RaycastingScene, res: int, level=0.0, chunk_s
         [0,4],[1,5],[2,6],[3,7]
     ], device=device, dtype=torch.long)
 
-    # 3️⃣ Voxel base indices
+    # Voxel base indices
     xs = torch.arange(res-1, device=device)
     ys = torch.arange(res-1, device=device)
     zs = torch.arange(res-1, device=device)

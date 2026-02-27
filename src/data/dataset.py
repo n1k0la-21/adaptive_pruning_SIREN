@@ -27,7 +27,7 @@ class MeshDataset:
         self.vertices = v
         self.triangles = np.asarray(self.mesh.triangles)
 
-        # detect detailed regions
+        # detect sharper regions 
         self.l_mag = self.laplace_magnitude()
         mask = self.l_mag > np.percentile(self.l_mag, 70) 
         self.biased = self.vertices[mask] # extract top 30%
@@ -40,6 +40,7 @@ class MeshDataset:
         pcd.points = self.mesh.vertices
         pcd.normals = self.mesh.vertex_normals
         self.kdtree = o3d.geometry.KDTreeFlann(pcd)
+
 
     # TODO: think about how the ratio of biased/unbiased points should be in general
     def sample_surface_points(self, num_points, rng: np.random.Generator) -> np.ndarray:
@@ -81,12 +82,14 @@ class MeshDataset:
     def sample_surface_normals(self, points: np.ndarray) -> np.ndarray:
         # Compute vertex normals if not already computed
         
-
         sampled_normals = []
         for pt in points:
             [_, idx, _] = self.kdtree.search_knn_vector_3d(o3d.utility.Vector3dVector([pt])[0], 1)
             sampled_normals.append(self.mesh.vertex_normals[idx[0]])
 
         return np.array(sampled_normals)
+    
+    def sample_global(self, num, rng):
+        return rng.uniform(-1, 1, size=(num, 3))
             
                 

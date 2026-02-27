@@ -7,26 +7,44 @@ from src.model.densification_module import densify
 import open3d as o3d
 from src.data.dataset import MeshDataset 
 
-def sample_global(num, rng):
-    return rng.uniform(-1, 1, size=(num, 3))
-
 def train(epochs: int, data: MeshDataset, no_surface: int, no_off_surface:int, model, loss: loss_module.Loss, optimizer: torch.optim.Adam, scene: o3d.t.geometry.RaycastingScene, pruning_module=None, densification=False):
-    rng = np.random.default_rng(seed=42)
     o3d.utility.random.seed(42)
-
+    rng = np.random.default_rng(42)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
+    
+    # global pool
+    x_surface_global = data.sample_surface_points(1000000, rng)
+    x_far = data.sample_global(500000, rng)
+    x_off_surface_global = data.sample_close_to_surface(500000, rng)
+
+    # corresponding sdf
+    sdf = o3d.core.Tensor(np.concatenate([x_far, x_off_surface_global], axis=0), dtype=o3d.core.Dtype.Float32)
+    sdf = scene.compute_signed_distance(sdf).numpy()
+
+    # ground truth grid mask for iou
+    with torch.no_grad():
+        x = torch.linspace(-1, 1, 32)
+        y = torch.linspace(-1, 1, 32)
+        z = torch.linspace(-1, 1, 32)
+
+        grid = torch.stack(torch.meshgrid(x, y, z, indexing='ij'), dim=-1).reshape(-1,3)
+        grid_o3d = o3d.core.Tensor(grid.numpy(), dtype=o3d.core.Dtype.Float32)
+        grid_sdf = scene.compute_signed_distance(grid_o3d).numpy()
+        grid_mask = torch.tensor(grid_sdf < 0, dtype=torch.bool)
 
     for step in range(epochs):
-        x_surface = torch.tensor(data.sample_surface_points(no_surface, rng=rng), device=device, dtype=torch.float32)
-        x_off_surface = data.sample_close_to_surface(num_points=no_off_surface//2, rng=rng)
-        x_global = sample_global(no_off_surface//2, rng)
+        x_surface = torch.tensor(rng.choice(x_surface_global, no_surface), device=device, dtype=torch.float32)
+        idx_off = rng.choice(len(x_off_surface_global), no_off_surface//2)
+        x_off_surface = x_off_surface_global[idx_off]
+        idx_global = rng.choice(len(x_far), no_off_surface//2)
+        x_global = x_far[idx_global]
         x_global = np.concatenate([x_global, x_off_surface], axis=0)
         x_global_tensor = torch.from_numpy(x_global).float().to(device)
 
-        # Compute signed distances
-        sd_tensor = o3d.core.Tensor(x_global, dtype=o3d.core.Dtype.Float32)
-        global_distances = scene.compute_signed_distance(sd_tensor).numpy()
+        # pooling from sdf (idx offset for x_off_surface)
+        idx_off += len(x_far)
+        global_distances = np.concatenate([sdf[idx_global], sdf[idx_off]], axis=0)
         global_distances_tensor = torch.tensor(global_distances, device=device, dtype=torch.float32)
 
         # Split inside / outside
@@ -96,9 +114,33 @@ def train(epochs: int, data: MeshDataset, no_surface: int, no_off_surface:int, m
                 loss.prune = False
                 optimizer = torch.optim.Adam(model.parameters(), lr=optimizer.param_groups[0]['lr'])
                 print(f"Pruned {pruned_neurons} neurons.")
-                
-            print(f"Step {step} | Loss {current_loss.item()}")
-            
 
+            #if step % 100 == 0:
+            #    msg = f"Step {step} | IoU {iou(model, grid_mask, grid)} | Loss {current_loss.item()}"
+            #else:    
+            msg = f"Step {step} | Loss {current_loss.item()}"
+            print(msg)
+    iou_state(model, grid_mask, grid)
+        
+def iou_state(model, grid_mask, grid):
+    with torch.no_grad():
+        device = torch.device("cuda")
+        grid = grid.to(device)
+        np.savetxt("grid_mask.txt", grid_mask.numpy())
+        grid_mask = grid_mask.to(device)
+        pred_mask = (model(grid) < 0).to(torch.bool)
+        np.savetxt("pred_mask.txt", pred_mask.detach().cpu().numpy())
+        
 
+def iou(model, grid_mask, grid):
+    with torch.no_grad():
+        device = torch.device("cuda")
+        grid = grid.to(device)
+        grid_mask = grid_mask.to(device)
+        pred_mask = (model(grid) < 0).to(torch.bool)
+        intersection = (pred_mask & grid_mask).sum()
+        union = (pred_mask | grid_mask).sum()
+
+        return (intersection / union).item()
+        
         

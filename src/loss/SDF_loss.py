@@ -55,12 +55,10 @@ def normal_loss(pred_sdf, coords, gt_normals, on_surface_mask):
         retain_graph=True
     )[0]
 
-    # slice gradients only for surface points
     gradients = sdf_grad[on_surface_mask]
 
-    # Normalize gradients
-    grad_norm = gradients / (gradients.norm(dim=-1, keepdim=True) + 1e-8)
-    gt_normals = surface_normals / (surface_normals.norm(dim=-1, keepdim=True) + 1e-8)
+    grad_norm = gradients / (gradients.norm(dim=-1, keepdim=True))
+    gt_normals = surface_normals / (surface_normals.norm(dim=-1, keepdim=True))
 
     # Cosine similarity: 1 if aligned, -1 if opposite
     cos_sim = (grad_norm * gt_normals).sum(dim=-1, keepdim=True)  # (N,1)
@@ -71,9 +69,10 @@ def normal_loss(pred_sdf, coords, gt_normals, on_surface_mask):
     return loss
 
 def off_surface_loss(sdf_inside, sdf_outside, true_inside, true_outside):
-    inside = ((true_inside - sdf_inside)**2).mean()
-    outside = ((true_outside - sdf_outside)**2).mean()
+    inside = torch.relu(sdf_inside).mean() *2
+    outside = torch.relu(-sdf_outside).mean() *2
     return inside + outside
     
 def interior_loss(sdf_off):
+    # this pushes off surface sdfs away from zero and prevents floating surfaces
     return torch.exp(-100 * torch.abs(sdf_off)).mean()

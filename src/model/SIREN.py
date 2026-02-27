@@ -41,7 +41,7 @@ class DeepSineLayer(nn.Module):
             self.linear.bias.uniform_(-bound, bound)
 
     def forward(self, x: torch.Tensor):
-        return torch.sin(self.omega * self.linear(x)) # forward: sin(omega * (W_T * x + bias))
+        return torch.sin(self.omega * self.linear(x)) # forward: sin((W_T * x + bias))
     
 
 
