@@ -6,6 +6,7 @@ import src.model.pruning_module as pm
 from src.model.densification_module import densify
 import open3d as o3d
 from src.data.dataset import MeshDataset 
+import matplotlib.pyplot as plt
 
 def train(epochs: int, data: MeshDataset, no_surface: int, no_off_surface:int, model, loss: loss_module.Loss, optimizer: torch.optim.Adam, scene: o3d.t.geometry.RaycastingScene, pruning_module=None, densification=False):
     o3d.utility.random.seed(42)
@@ -24,14 +25,18 @@ def train(epochs: int, data: MeshDataset, no_surface: int, no_off_surface:int, m
 
     # ground truth grid mask for iou
     with torch.no_grad():
-        x = torch.linspace(-1, 1, 32)
-        y = torch.linspace(-1, 1, 32)
-        z = torch.linspace(-1, 1, 32)
+        x = torch.linspace(-1, 1, 64)
+        y = torch.linspace(-1, 1, 64)
+        z = torch.linspace(-1, 1, 64)
 
         grid = torch.stack(torch.meshgrid(x, y, z, indexing='ij'), dim=-1).reshape(-1,3)
         grid_o3d = o3d.core.Tensor(grid.numpy(), dtype=o3d.core.Dtype.Float32)
         grid_sdf = scene.compute_signed_distance(grid_o3d).numpy()
         grid_mask = torch.tensor(grid_sdf < 0, dtype=torch.bool)
+
+    loss_history = []       # every 10 steps
+    iou_history = []        # every 100 steps
+    iou_steps = []
 
     for step in range(epochs):
         x_surface = torch.tensor(rng.choice(x_surface_global, no_surface), device=device, dtype=torch.float32)
@@ -102,8 +107,9 @@ def train(epochs: int, data: MeshDataset, no_surface: int, no_off_surface:int, m
         optimizer.zero_grad()
         current_loss.backward()
         optimizer.step()
-
+        
         if step % 10 == 0:
+            loss_history.append(current_loss.item())
             if(densification == True and step == 200):
                 added_frequencies = densify(model=model)
                 optimizer = torch.optim.Adam(model.parameters(), lr=optimizer.param_groups[0]['lr'])
@@ -115,31 +121,69 @@ def train(epochs: int, data: MeshDataset, no_surface: int, no_off_surface:int, m
                 optimizer = torch.optim.Adam(model.parameters(), lr=optimizer.param_groups[0]['lr'])
                 print(f"Pruned {pruned_neurons} neurons.")
 
-            #if step % 100 == 0:
-            #    msg = f"Step {step} | IoU {iou(model, grid_mask, grid)} | Loss {current_loss.item()}"
-            #else:    
-            msg = f"Step {step} | Loss {current_loss.item()}"
+            if step % 100 == 0:
+                current_iou = iou(model, grid_mask, grid)
+                iou_history.append(current_iou)
+                iou_steps.append(step)
+                msg = f"Step {step} | IoU {current_iou:.4f} | Loss {current_loss.item():.4f}"
+            else:    
+                msg = f"Step {step} | Loss {current_loss:.4f}"
             print(msg)
-    iou_state(model, grid_mask, grid)
+
+    current_iou = iou(model, grid_mask, grid)
+    msg = f"Step {step} | IoU {current_iou:.4f} | Loss {current_loss.item():.4f}"
+    print(msg)
+    plot_training(loss_history, iou_history, iou_steps)
+
+def plot_training(loss_history, iou_history, iou_steps):
+    loss_steps = [i * 10 for i in range(len(loss_history))]
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
+
+    ax1.plot(loss_steps, loss_history, color='steelblue', linewidth=1.5)
+    ax1.set_xlabel("Step")
+    ax1.set_ylabel("Loss")
+    ax1.set_title("Training Loss")
+    ax1.grid(True, alpha=0.3)
+
+    ax2.plot(iou_steps, iou_history, color='darkorange', linewidth=1.5, marker='o', markersize=4)
+    ax2.set_xlabel("Step")
+    ax2.set_ylabel("IoU")
+    ax2.set_title("IoU (64^3 grid)")
+    ax2.set_ylim(0, 1)
+    ax2.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig("training_curves.png", dpi=150)
+    plt.show()
+    print("Saved training_curves.png")
         
-def iou_state(model, grid_mask, grid):
-    with torch.no_grad():
-        device = torch.device("cuda")
-        grid = grid.to(device)
-        np.savetxt("grid_mask.txt", grid_mask.numpy())
-        grid_mask = grid_mask.to(device)
-        pred_mask = (model(grid) < 0).to(torch.bool)
-        np.savetxt("pred_mask.txt", pred_mask.detach().cpu().numpy())
-        
+def chamfer_hausdorff(path1, path2):
+    mesh1 = o3d.io.read_triangle_mesh(path1)
+    mesh2 = o3d.io.read_triangle_mesh(path2)
+
+    print(f"mesh1 triangles: {len(mesh1.triangles)}, vertices: {len(mesh1.vertices)}")
+    print(f"mesh2 triangles: {len(mesh2.triangles)}, vertices: {len(mesh2.vertices)}")
+
+    pcd1 = mesh1.sample_points_uniformly(number_of_points=100000)
+    pcd2 = mesh2.sample_points_uniformly(number_of_points=100000)
+
+    d1 = np.asarray(pcd1.compute_point_cloud_distance(pcd2))
+    d2 = np.asarray(pcd2.compute_point_cloud_distance(pcd1))
+
+    chamfer = (np.mean(d1) + np.mean(d2)) / 2
+    hausdorff = max(np.max(d1), np.max(d2))
+
+    return chamfer, hausdorff
 
 def iou(model, grid_mask, grid):
     with torch.no_grad():
         device = torch.device("cuda")
         grid = grid.to(device)
         grid_mask = grid_mask.to(device)
-        pred_mask = (model(grid) < 0).to(torch.bool)
-        intersection = (pred_mask & grid_mask).sum()
-        union = (pred_mask | grid_mask).sum()
+        pred_mask = (model(grid) < 0).squeeze(-1).bool()
+        intersection = torch.logical_and(pred_mask, grid_mask).sum()
+        union = torch.logical_or(pred_mask, grid_mask).sum()
 
         return (intersection / union).item()
         
