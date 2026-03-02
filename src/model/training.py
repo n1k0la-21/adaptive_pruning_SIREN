@@ -115,7 +115,7 @@ def train(epochs: int, data: MeshDataset, no_surface: int, no_off_surface:int, m
                 optimizer = torch.optim.Adam(model.parameters(), lr=optimizer.param_groups[0]['lr'])
                 print(f"Added {len(added_frequencies)} frequencies to the embedding layer.")
 
-            if(pruning_module != None and step == 400):
+            if(pruning_module != None and step == 300):
                 pruned_neurons = pruning_module.prune()
                 loss.prune = False
                 optimizer = torch.optim.Adam(model.parameters(), lr=optimizer.param_groups[0]['lr'])

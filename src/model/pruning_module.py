@@ -27,7 +27,8 @@ class AIRe():
 
             row_norms = torch.sum(torch.abs(W), dim=1)
 
-            threshold = torch.quantile(row_norms, self.threshold_percentage)
+            k = max(1, int(self.threshold_percentage * len(row_norms)))
+            threshold = torch.kthvalue(row_norms, k).values
 
             mask = row_norms <= threshold
 
@@ -91,7 +92,8 @@ class DepGraph():
             topk_vals = torch.topk(current_importance, k=k).values
             relative_importance = k * current_importance / torch.sum(topk_vals)
 
-            threshold = torch.quantile(relative_importance, self.threshold)
+            k_prune = max(1, int(self.threshold * len(relative_importance)))
+            threshold = torch.kthvalue(relative_importance, k_prune).values
             mask = relative_importance <= threshold
 
             keep = torch.where(~mask)[0]

@@ -44,22 +44,15 @@ class DeepSineLayer(nn.Module):
         return torch.sin(self.omega * self.linear(x)) # forward: sin((W_T * x + bias))
     
 
-
 class SIRENSDF(nn.Module):
-    def __init__(self, in_dim: int = 3, hidden_dim: int = 256, num_hidden_layers: int = 4, omega_0: float = 30.0):
+    def __init__(self, in_dim: int = 3, hidden_dims: list = [256, 256, 256, 256], omega_0: float = 30.0):
         super().__init__()
-
         layers = []
-
-        layers.append(FirstSineLayer(in_dim, hidden_dim, omega_0))
-
-        for _ in range(num_hidden_layers):
-            layers.append(DeepSineLayer(hidden_dim, hidden_dim, omega_0))
-
+        layers.append(FirstSineLayer(in_dim, hidden_dims[0], omega_0))
+        for i in range(1, len(hidden_dims)):
+            layers.append(DeepSineLayer(hidden_dims[i - 1], hidden_dims[i], omega_0))
         self.hidden = nn.Sequential(*layers)
-
-        self.final = nn.Linear(hidden_dim, 1) # final layer without sine activation
-
+        self.final = nn.Linear(hidden_dims[-1], 1)
         self.init_final()
 
     def init_final(self):
