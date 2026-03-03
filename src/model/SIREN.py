@@ -21,9 +21,7 @@ class FirstSineLayer(nn.Module):
             self.linear.bias.uniform_(-bound, bound)
 
     def forward(self, x: torch.Tensor):
-        # only positive frequencies
-        scale = torch.exp(self.omega_scale)
-        return torch.sin(scale * self.omega_0 * self.linear(x)) # forward: sin(omega_0 * (W_T * x + bias))
+        return torch.sin(self.omega_scale * self.omega_0 * self.linear(x)) # forward: sin(omega_0 * (W_T * x + bias))
     
 
     

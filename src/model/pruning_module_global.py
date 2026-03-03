@@ -4,9 +4,8 @@ import torch_pruning as tp
 
 class AIRe():
     
-    def __init__(self, model, threshold_percentage: float, k):
+    def __init__(self, model, k):
         self.model = model
-        self.threshold_percentage = threshold_percentage
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.k = k
     
@@ -14,25 +13,23 @@ class AIRe():
         total = 0
         layers = self.model.hidden
         device = self.device
-        normalized_norms_list = []
+        norms_list = []
 
-        # compute global threshold on normalized norms
+        # compute global threshold
         for i in range(1, len(layers)):
             W = layers[i].linear.weight.data
             row_norms = torch.sum(torch.abs(W), dim=1)
-            # unsure about normalization because i want to avoid overpruning single layers
-            normalized = row_norms / (row_norms.mean())
-            normalized_norms_list.append(normalized)
+            
+            norms_list.append(row_norms)
 
-        normalized_norms_tensor = torch.cat(normalized_norms_list)
-        threshold = torch.quantile(normalized_norms_tensor, self.threshold_percentage)
+        norms_tensor = torch.cat(norms_list)
+        threshold = torch.kthvalue(norms_tensor, self.k)
 
         for i in range(1, len(layers)):
             W = layers[i].linear.weight.data
             row_norms = torch.sum(torch.abs(W), dim=1)
-            normalized = row_norms / (row_norms.mean())
 
-            mask = normalized <= threshold
+            mask = row_norms <= threshold
 
             # could be that a lot of neurons are pruned which messes up the frequency composition for a SIREN
             #max_prune = int(0.7 * len(mask)) 
@@ -62,27 +59,28 @@ class AIRe():
         return total
     
     def reg_term(self):
-
-        penalty = 0.0
-
-        for module in self.model.hidden[1:].modules():
-
-            if isinstance(module, torch.nn.Linear):
-                W = module.weight
-                col_norms = torch.sum(torch.abs(W), dim=0)
-            
-                indices = torch.topk(-col_norms, self.k).indices
-                penalty += torch.sum(col_norms[indices])
-
+        col_norms_list = []
+        modules = [m for m in self.model.hidden[1:].modules() 
+                   if isinstance(m, torch.nn.Linear)]
+    
+        for module in modules:
+            W = module.weight
+            col_norms = torch.sum(torch.abs(W), dim=0)
+            col_norms_list.append(col_norms)
+    
+        all_norms = torch.cat(col_norms_list)
+        indices = torch.topk(-all_norms, self.k).indices
+        penalty = torch.sum(all_norms[indices])
+    
         return penalty
 
 class DepGraph():
-    def __init__(self, model, example_inputs, threshold=0.5, alpha=4):
+    def __init__(self, model, threshold=0.5, alpha=4):
         self.model = model
-        self.device = next(model.parameters()).device
+        self.device = torch.device("cuda")
         self.threshold = threshold
 
-        self.example_inputs = example_inputs.to(self.device)
+        self.example_inputs = torch.randn(1,3).to(self.device)
 
         self.DG = tp.DependencyGraph().build_dependency(
             self.model, example_inputs=self.example_inputs
@@ -95,12 +93,12 @@ class DepGraph():
         if ignored_layers is None:
             ignored_layers = []
 
-        groups = self.DG.get_all_groups(ignored_layers=ignored_layers)
+        groups = self.DG.get_all_groups(ignored_layers=[self.model.hidden[0].linear])
 
         importance_list = []
 
         for group in groups:
-            I_gk = self.importance(group)  # shape: [num_channels]
+            I_gk = self.importance(group)  
             if I_gk is None or len(I_gk) == 0:
                 continue
             importance_list.append(I_gk)
@@ -115,16 +113,13 @@ class DepGraph():
 
         return torch.sum(gamma * importance)
 
-    def prune(self, ignored_layers=None):
-        if ignored_layers is None:
-            ignored_layers = []
-
+    def prune(self):
         pruner = tp.pruner.MagnitudePruner(
             self.model,
             self.example_inputs,
             importance=self.importance,
             pruning_ratio=self.threshold,
-            ignored_layers=ignored_layers,
+            ignored_layers=[self.model.hidden[0].linear],
         )
 
         before = sum(p.numel() for p in self.model.parameters())
