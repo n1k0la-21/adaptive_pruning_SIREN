@@ -39,6 +39,13 @@ def train(epochs: int, data: MeshDataset, no_surface: int, no_off_surface:int, m
     iou_steps = []
 
     for step in range(epochs):
+
+        if(densification == True and (step == 0 or step == 200)):
+                added_frequencies = densify(model=model)
+                print(model.hidden[0].omega_scale)
+                optimizer = torch.optim.Adam(model.parameters(), lr=optimizer.param_groups[0]['lr'])
+                print(f"Added {len(added_frequencies)} frequencies to the embedding layer.")
+
         x_surface = torch.tensor(rng.choice(x_surface_global, no_surface), device=device, dtype=torch.float32)
         idx_off = rng.choice(len(x_off_surface_global), no_off_surface//2)
         x_off_surface = x_off_surface_global[idx_off]
@@ -110,12 +117,12 @@ def train(epochs: int, data: MeshDataset, no_surface: int, no_off_surface:int, m
         
         if step % 10 == 0:
             loss_history.append(current_loss.item())
-            if(densification == True and step == 200):
-                added_frequencies = densify(model=model)
-                optimizer = torch.optim.Adam(model.parameters(), lr=optimizer.param_groups[0]['lr'])
-                print(f"Added {len(added_frequencies)} frequencies to the embedding layer.")
+            
+            if(pruning_module != None and step == 200):
+                loss.prune = True
+                print(f"TWD is now applied")
 
-            if(pruning_module != None and step == 300):
+            if(pruning_module != None and step == 700):
                 pruned_neurons = pruning_module.prune()
                 loss.prune = False
                 optimizer = torch.optim.Adam(model.parameters(), lr=optimizer.param_groups[0]['lr'])
@@ -134,6 +141,7 @@ def train(epochs: int, data: MeshDataset, no_surface: int, no_off_surface:int, m
     msg = f"Step {step} | IoU {current_iou:.4f} | Loss {current_loss.item():.4f}"
     print(msg)
     plot_training(loss_history, iou_history, iou_steps)
+    return loss_history, iou_history, iou_steps
 
 def plot_training(loss_history, iou_history, iou_steps):
     loss_steps = [i * 10 for i in range(len(loss_history))]

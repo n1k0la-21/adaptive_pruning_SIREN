@@ -1,155 +1,149 @@
 import src.model.SIREN as si
 import torch
+import torch_pruning as tp
 
 class AIRe():
-    
-    def __init__(self, model, threshold_percentage: float, k):
+
+    def __init__(self, model, pruning_ratio):
         self.model = model
-        self.threshold_percentage = threshold_percentage
+        self.ratio = pruning_ratio
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.k = k
-    
+
     def prune(self):
 
-        total = 0
         layers = self.model.hidden
-        device = self.device
+        total_pruned = 0
 
-        for i in range(len(layers)):
+        # skip first layer
+        for i in range(1, len(layers)):
 
-            current = layers[i]
-
-            if not isinstance(current, si.DeepSineLayer):
-                continue
-
-            W = current.linear.weight.data
-            b = current.linear.bias.data
+            layer = layers[i]
+            W = layer.linear.weight.data
 
             row_norms = torch.sum(torch.abs(W), dim=1)
 
-            k = max(1, int(self.threshold_percentage * len(row_norms)))
-            threshold = torch.kthvalue(row_norms, k).values
+            layer_size = row_norms.shape[0]
+            k_layer = int(layer_size * self.ratio)
 
-            mask = row_norms <= threshold
-
-            if mask.sum() == 0:
+            if k_layer == 0:
                 continue
 
-            keep = torch.where(~mask)[0]
+            prune_idx = torch.topk(
+                row_norms, k_layer, largest=False
+            ).indices
 
-        # rebuild current layer
-            new_current, new_next = update(model=self.model, layer_idx=i, keep=keep)
-            new_current = new_current.to(device)
-            new_next = new_next.to(device)
-        
-            current.linear = new_current
+            keep = torch.tensor(
+                [j for j in range(layer_size) if j not in prune_idx],
+                device=self.device
+            )
+
+            if len(keep) == 0:
+                continue
+
+            new_current, new_next = update(self.model, i, keep)
+
+            if new_current is None or new_next is None:
+                continue
+
+            new_current = new_current.to(self.device)
+            new_next = new_next.to(self.device)
+
+            layers[i].linear = new_current
 
             if i < len(layers) - 1:
                 layers[i + 1].linear = new_next
             else:
                 self.model.final = new_next
 
-            total += mask.sum().item()
-        return total
-    
+            total_pruned += k_layer
+
+        return total_pruned
+
+
     def reg_term(self):
 
+        layers = self.model.hidden
         penalty = 0.0
 
-        for module in self.model.hidden[1:].modules():
+        for i in range(1, len(layers)):
 
-            if isinstance(module, torch.nn.Linear):
-                W = module.weight
-                col_norms = torch.sum(torch.abs(W), dim=0)
-            
-                indices = torch.topk(-col_norms, self.k).indices
-                penalty += torch.sum(col_norms[indices])
+            W = layers[i].linear.weight
+            row_norms = torch.sum(torch.abs(W), dim=1)
+
+            layer_size = row_norms.shape[0]
+            k_layer = int(layer_size * self.ratio)
+
+            if k_layer == 0:
+                continue
+
+            weakest = torch.topk(
+                row_norms, k_layer, largest=False
+            ).values
+
+            penalty += torch.sum(weakest)
 
         return penalty
 
 class DepGraph():
-    def __init__(self, model, threshold_percentage, k):
+    def __init__(self, model, threshold=0.5, alpha=4):
         self.model = model
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.threshold = threshold_percentage
-        self.k = k
+        self.device = torch.device("cuda")
+        self.threshold = threshold
 
-    def prune(self):
-        device = self.device
-        total = 0
-        layers = self.model.hidden
+        self.example_inputs = torch.randn(1,3).to(self.device)
 
-        for i in range(1, len(layers)): # skip embedding layer (should only be able to grow)
-            current = layers[i]
-            next = None
-            if i < len(layers) - 1:
-                next = layers[i + 1].linear
-            else:
-                next = self.model.final
+        self.DG = tp.DependencyGraph().build_dependency(
+            self.model, example_inputs=self.example_inputs
+        )
 
-            current_importance = self.importance(current.linear, next) # relationship between out_dim of this layer and in_dim of the next
-            k = min(self.k, len(current_importance)) # safety measure
-            topk_vals = torch.topk(current_importance, k=k).values
-            relative_importance = k * current_importance / torch.sum(topk_vals)
+        self.importance = tp.importance.GroupMagnitudeImportance(p=2)
 
-            k_prune = max(1, int(self.threshold * len(relative_importance)))
-            threshold = torch.kthvalue(relative_importance, k_prune).values
-            mask = relative_importance <= threshold
+    # (paper eq. 4 & 5)
+    def reg_term(self, ignored_layers=None):
+        if ignored_layers is None:
+            ignored_layers = []
 
-            keep = torch.where(~mask)[0]
+        groups = self.DG.get_all_groups(ignored_layers=[self.model.hidden[0].linear])
 
-            new_current, new_next = update(model=self.model, layer_idx=i, keep=keep)
-            new_current = new_current.to(device)
-            new_next = new_next.to(device)
-        
-            current.linear = new_current
-
-            if i < len(layers) - 1:
-                layers[i + 1].linear = new_next
-            else:
-                self.model.final = new_next
-
-            total += mask.sum().item()
-
-        return total
-    
-    def importance(self, current, next):
-        W_out = current.weight
-        W_in = next.weight 
-
-        # Compute squared norms
-        out_dim_norm = torch.sum(W_out**2, dim=1)  # per neuron in current layer
-        in_dim_norm = torch.sum(W_in**2, dim=0)    # per neuron in current layer
-
-            # Importance per neuron
-        importance = out_dim_norm + in_dim_norm
-        
-        return importance
-    
-    def reg_term(self):
         importance_list = []
-        layers = self.model.hidden
-        
-        for i in range(1, len(layers)):
-            current = layers[i].linear
-            next = None
-            if i < len(layers) - 1:
-                next = layers[i + 1].linear
-            else:
-                next = self.model.final
-            
-            to_append = self.importance(current, next)
-            importance_list.append(to_append)
-            
+
+        for group in groups:
+            I_gk = self.importance(group)  
+            if I_gk is None or len(I_gk) == 0:
+                continue
+            importance_list.append(I_gk)
+
         importance = torch.cat(importance_list)
 
-        k_max = torch.max(importance)
-        k_min = torch.min(importance)
-        lambda_k = 2**(4 * (k_max - importance)/(k_max - k_min))
+        k_max = importance.max()
+        k_min = importance.min()
 
-        return torch.sum(lambda_k * importance)
+        # 4 is suggested by paper
+        gamma = 2 ** (4 * (k_max - importance) / (k_max - k_min))
+
+        return torch.sum(gamma * importance)
+
+    def prune(self):
+        pruner = tp.pruner.MagnitudePruner(
+            self.model,
+            self.example_inputs,
+            importance=self.importance,
+            pruning_ratio=self.threshold,
+            ignored_layers=[self.model.hidden[0].linear],
+        )
+
+        before = sum(p.numel() for p in self.model.parameters())
+
+        pruner.step()
+
+        after = sum(p.numel() for p in self.model.parameters())
+
+        return before - after
 
 def update(model, layer_idx: int, keep):
+            if len(keep) == 0:
+                return None, None
+            
             layers = model.hidden
             current = layers[layer_idx]
             

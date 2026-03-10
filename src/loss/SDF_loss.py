@@ -12,7 +12,7 @@ class Loss:
         self.lambda_off = lambda_off
         self.pruning_module = pruning_module
         self.model = model
-        self.prune = True # can be switched through training after pruning is done to make model learn normally
+        self.prune = False # can be switched through training
     
     def compute_loss(self, input, pred, pred_surface, pred_inside, pred_outside, pred_off, sdf_grad, normals, surface_mask, true_inside, true_outside):
         loss_normal = self.lambda_normal * normal_loss(

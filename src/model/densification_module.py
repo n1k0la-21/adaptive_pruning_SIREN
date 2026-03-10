@@ -1,5 +1,6 @@
 import src.model.SIREN as si
 import torch
+import math
 
 def densify(model: si.SIRENSDF):
     first = model.hidden[0]
@@ -12,7 +13,7 @@ def densify(model: si.SIRENSDF):
 
         col_norms = torch.sum(torch.abs(W), dim=0) # columns are associated with one frequency in the embedding layer (so we are interested in the input dimension)
 
-        threshold = torch.quantile(col_norms, 0.8)  # top 20%
+        threshold = torch.quantile(col_norms, 0.7)  # top 20%
         important = col_norms >= threshold
 
         # expand embedding layer with double the frequency of important outputs
@@ -42,13 +43,13 @@ def densify(model: si.SIRENSDF):
         first.linear = new_linear
 
         # rebuild next layers weight matrix
-        bound = 1e-4
-
         new_next_lin = torch.nn.Linear(
             in_features=first.linear.out_features,
             out_features=next.linear.out_features,
             bias=True
         ).to(device)
+
+        bound = math.sqrt(6 / new_next_lin.in_features) / next.omega
 
         new_next_lin.weight.data.uniform_(-bound, bound)
         new_next_lin.bias.data.uniform_(-bound, bound)
