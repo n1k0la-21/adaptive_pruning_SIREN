@@ -12,7 +12,7 @@ class MeshDataset:
 
         center = (vmin + vmax) / 2.0
         extent = (vmax - vmin)
-        scale = extent.max() / 2.0
+        scale = extent.max() / 2.0 + 0.02
 
         v = (v - center) / scale
 

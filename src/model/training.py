@@ -40,10 +40,9 @@ def train(epochs: int, data: MeshDataset, no_surface: int, no_off_surface:int, m
 
     for step in range(epochs):
 
-        if(densification == True and (step == 0 or step == 200)):
-                added_frequencies = densify(model=model)
+        if(densification == True and (step == 100 or step == 750)):
+                added_frequencies = densify(model=model, optimizer=optimizer)
                 print(model.hidden[0].omega_scale)
-                optimizer = torch.optim.Adam(model.parameters(), lr=optimizer.param_groups[0]['lr'])
                 print(f"Added {len(added_frequencies)} frequencies to the embedding layer.")
 
         x_surface = torch.tensor(rng.choice(x_surface_global, no_surface), device=device, dtype=torch.float32)
@@ -112,6 +111,8 @@ def train(epochs: int, data: MeshDataset, no_surface: int, no_off_surface:int, m
         )
 
         optimizer.zero_grad()
+        if(loss.prune == True and isinstance(pruning_module, pm.DepGraph)):
+            pruning_module.regularize()
         current_loss.backward()
         optimizer.step()
         
@@ -184,15 +185,18 @@ def chamfer_hausdorff(path1, path2):
 
     return chamfer, hausdorff
 
-def iou(model, grid_mask, grid):
+def iou(model, grid_mask, grid, batch_size=65536):
+    model.eval()
+    all_preds = []
     with torch.no_grad():
-        device = torch.device("cuda")
-        grid = grid.to(device)
-        grid_mask = grid_mask.to(device)
-        pred_mask = (model(grid) < 0).squeeze(-1).bool()
-        intersection = torch.logical_and(pred_mask, grid_mask).sum()
-        union = torch.logical_or(pred_mask, grid_mask).sum()
-
-        return (intersection / union).item()
-        
+        for i in range(0, len(grid), batch_size):
+            batch = grid[i:i+batch_size].to(next(model.parameters()).device)
+            sdf_pred = model(batch)
+            pred_mask = sdf_pred < 0
+            all_preds.append(pred_mask.cpu())
+    all_preds = torch.cat(all_preds, dim=0).squeeze()
+    
+    intersection = (all_preds & grid_mask).sum().float()
+    union = (all_preds | grid_mask).sum().float()
+    return (intersection / union).item()
         

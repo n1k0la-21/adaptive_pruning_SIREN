@@ -1,12 +1,12 @@
 import numpy as np
 import torch
 import src.model.SIREN as si
+import src.model.pruning_module as pm
 
 class Loss:
-    def __init__(self, lambda_twd:float, lambda_surface:float, lambda_eikonal:float, lambda_normal:float, model, lambda_inter: float, lambda_off: float, pruning_module=None):
+    def __init__(self, lambda_surface:float, lambda_eikonal:float, lambda_normal:float, model, lambda_inter: float, lambda_off: float, pruning_module=None):
         self.lambda_eikonal = lambda_eikonal
         self.lambda_normal = lambda_normal
-        self.lambda_twd = lambda_twd
         self.lambda_surface = lambda_surface
         self.lambda_inter = lambda_inter
         self.lambda_off = lambda_off
@@ -29,8 +29,8 @@ class Loss:
 
         total_loss = loss_normal + loss_surface + loss_off + loss_inter + loss_eikonal
 
-        if self.pruning_module != None and self.prune == True:
-            total_loss += self.lambda_twd * self.pruning_module.reg_term()
+        if self.pruning_module != None and self.prune == True and isinstance(self.pruning_module, pm.AIRe):
+            total_loss += self.pruning_module.reg_term()
         return total_loss
     
 def surface_loss(sdf_surface: torch.Tensor):
@@ -70,7 +70,7 @@ def normal_loss(pred_sdf, coords, gt_normals, on_surface_mask):
 
 def off_surface_loss(sdf_inside, sdf_outside, true_inside, true_outside):
     inside = torch.relu(sdf_inside).mean() *2
-    outside = torch.relu(-sdf_outside).mean() *2
+    outside = torch.relu(-sdf_outside).mean() *2 
     return inside + outside
     
 def interior_loss(sdf_off):

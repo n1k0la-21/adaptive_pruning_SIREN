@@ -8,6 +8,8 @@ class AIRe():
         self.model = model
         self.ratio = pruning_ratio
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.step = 1/500
+        self.alpha = 0
 
     def prune(self):
 
@@ -81,63 +83,36 @@ class AIRe():
             ).values
 
             penalty += torch.sum(weakest)
+        
+        penalty *= self.alpha
+        self.alpha += self.step
 
         return penalty
 
 class DepGraph():
-    def __init__(self, model, threshold=0.5, alpha=4):
+    def __init__(self, model, threshold=0.5):
         self.model = model
         self.device = torch.device("cuda")
         self.threshold = threshold
+        self.example_inputs = torch.randn(1, 3).to(self.device)
 
-        self.example_inputs = torch.randn(1,3).to(self.device)
+        self.pruner = None
 
-        self.DG = tp.DependencyGraph().build_dependency(
-            self.model, example_inputs=self.example_inputs
-        )
-
-        self.importance = tp.importance.GroupMagnitudeImportance(p=2)
-
-    # (paper eq. 4 & 5)
-    def reg_term(self, ignored_layers=None):
-        if ignored_layers is None:
-            ignored_layers = []
-
-        groups = self.DG.get_all_groups(ignored_layers=[self.model.hidden[0].linear])
-
-        importance_list = []
-
-        for group in groups:
-            I_gk = self.importance(group)  
-            if I_gk is None or len(I_gk) == 0:
-                continue
-            importance_list.append(I_gk)
-
-        importance = torch.cat(importance_list)
-
-        k_max = importance.max()
-        k_min = importance.min()
-
-        # 4 is suggested by paper
-        gamma = 2 ** (4 * (k_max - importance) / (k_max - k_min))
-
-        return torch.sum(gamma * importance)
+    def regularize(self):
+        if(self.pruner == None):
+            self.pruner = tp.pruner.GroupNormPruner(
+                self.model,
+                self.example_inputs,
+                importance=tp.importance.GroupMagnitudeImportance(p=2),
+                pruning_ratio=self.threshold,
+                ignored_layers=[self.model.hidden[0].linear, self.model.final],
+            )
+        self.pruner.regularize(self.model)
 
     def prune(self):
-        pruner = tp.pruner.MagnitudePruner(
-            self.model,
-            self.example_inputs,
-            importance=self.importance,
-            pruning_ratio=self.threshold,
-            ignored_layers=[self.model.hidden[0].linear],
-        )
-
         before = sum(p.numel() for p in self.model.parameters())
-
-        pruner.step()
-
+        self.pruner.step()
         after = sum(p.numel() for p in self.model.parameters())
-
         return before - after
 
 def update(model, layer_idx: int, keep):
