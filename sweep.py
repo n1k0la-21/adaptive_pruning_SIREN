@@ -3,23 +3,23 @@ sweep.py  –  Full hyperparameter / seed sweep for SIREN SDF experiments.
  
 For every mesh in {lucy, armadillo, dragon, bunny} this script trains:
   1. One large un-pruned model (256-256-256)
-  2. One densified model       (1102-256-256)
-  3. For each pruning ratio in {0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65}
+  2. One densified model       (256-256-256)
+  3. For each pruning ratio in [0.3, 0.95]
        a. AIRe               (256 → keep hidden)
        b. DepGraph            (256 → keep hidden)
        c. AIRe  + densification
        d. DepGraph + densification
  
-Each run is repeated for seeds {0, 1, 2}.  Results (weights + history) are
+Each run is repeated for seeds {42, 43, 44}.  Results (weights + history) are
 stored under  {mesh}_weights/seed_{seed}/  so different seeds never collide.
  
-Folder structure produced (example for bunny, seed 0, ratio 0.30):
-  bunny_weights/seed_0/large_unpruned.pth
-  bunny_weights/seed_0/history/large_unpruned_history.npz
-  bunny_weights/seed_0/densified.pth
-  bunny_weights/seed_0/history/densified_history.npz
-  bunny_weights/seed_0/AIRe_0.3.pth
-  bunny_weights/seed_0/history/AIRe_0.3_history.npz
+Folder structure produced (example for bunny, seed 42, ratio 0.30):
+  bunny_weights/seed_42/large_unpruned.pth
+  bunny_weights/seed_42/history/large_unpruned_history.npz
+  bunny_weights/seed_42/densified.pth
+  bunny_weights/seed_42/history/densified_history.npz
+  bunny_weights/seed_42/AIRe_0.3.pth
+  bunny_weights/seed_42/history/AIRe_0.3_history.npz
   ...
  
 Mesh (.obj) files used for chamfer/hausdorff are written to the same
@@ -34,34 +34,28 @@ import numpy as np
 import torch
 import open3d as o3d
  
-# ── project imports (adjust if your package layout differs) ──────────────────
 import src.model.SIREN as si
-from src.model.training import train
+from src.model.training import train 
 import src.loss.SDF_loss as loss
 import src.model.pruning_module as pm
 import src.data.dataset as data
 import src.mesh_extraction.marching_cubes_gpu as marching_cubes
 from src.model.metrics import chamfer_hausdorff
  
-os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"  # determinism
+os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"  
  
- 
-# ── constants ────────────────────────────────────────────────────────────────
- 
-MESHES = ["lucy", "armadillo", "dragon", "bunny"]
+MESHES = ["bunny", "armadillo", "dragon", "lucy"]
  
 SEEDS = [42, 43, 44]
  
-# 30 % → 65 % in 5 % steps  (14 ratios)
-PRUNE_RATIOS = [round(0.30 + 0.05 * i, 2) for i in range(14)]
-# → interval of [0.3, 0.95]
+# 30 % → 99 % in somewhat logarithmic steps (5 total)
+PRUNE_RATIOS = [0.30, 0.50, 0.70, 0.85, 0.95]
  
 EPOCHS       = 1000
-NO_SURFACE   = 10_000
-NO_OFF_SURFACE = 15_000
+NO_SURFACE   = 10000
+NO_OFF_SURFACE = 15000
 LR           = 1e-4 * 2
  
-# Loss weights – identical to notebook
 LOSS_KWARGS = dict(
     lambda_surface=175,
     lambda_eikonal=20,
@@ -71,14 +65,13 @@ LOSS_KWARGS = dict(
 )
  
 DEVICE = torch.device("cuda")
-MC_RESOLUTION = 128
+MC_RESOLUTION = 256 
 MC_LEVEL      = 0.0
  
  
-# ── helpers ──────────────────────────────────────────────────────────────────
+# helpers 
  
 def set_seeds(seed: int) -> None:
-    """Seed everything for reproducibility."""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -87,10 +80,23 @@ def set_seeds(seed: int) -> None:
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
  
+def compute_iou(model, mesh_dataset) -> float:
+    """Compute IoU on a 256^3 grid against the ground-truth SDF."""
+    with torch.no_grad(): 
+        x = torch.linspace(-1, 1, 256)
+        y = torch.linspace(-1, 1, 256)
+        z = torch.linspace(-1, 1, 256)
+        grid = torch.stack(torch.meshgrid(x, y, z, indexing='ij'), dim=-1).reshape(-1, 3)
+        grid_o3d = o3d.core.Tensor(grid.numpy(), dtype=o3d.core.Dtype.Float32)
+        grid_sdf = mesh_dataset.scene.compute_signed_distance(grid_o3d).numpy()
+        grid_mask = torch.tensor(grid_sdf < 0, dtype=torch.bool)
+
+    from src.model.training_copy import iou
+    return iou(model, grid_mask, grid)
  
 def hidden_size_after_prune(ratio: float, base: int = 256) -> int:
     """Return the number of neurons kept after pruning *ratio* fraction."""
-    return round(base * (1.0 - ratio))
+    return math.ceil(base * (1.0 - ratio))
  
  
 def make_dirs(mesh_name: str, seed: int) -> tuple[str, str]:
@@ -107,13 +113,16 @@ def save_history(
     loss_hist,
     iou_hist,
     iou_steps,
+    iou: float = None,
 ) -> None:
-    np.savez(
-        os.path.join(history_dir, f"{name}_history.npz"),
+    kwargs = dict(
         loss=np.array(loss_hist),
         iou=np.array(iou_hist),
         steps=np.array(iou_steps),
     )
+    if iou is not None:
+        kwargs["iou"] = np.array([iou])
+    np.savez(os.path.join(history_dir, f"{name}_history.npz"), **kwargs)
  
  
 def extract_mesh_and_metrics(
@@ -131,19 +140,20 @@ def extract_mesh_and_metrics(
     return chamfer, hausdorff
  
  
-def load_model(pth_path: str, hidden_dims: list[int]) -> si.SIRENSDF:
-    model = si.SIRENSDF(hidden_dims=hidden_dims)
-    missing, unexpected = model.load_state_dict(
-        torch.load(pth_path, map_location=DEVICE)
-    )
-    if missing or unexpected:
-        print(f"  [warn] load_state_dict: missing={missing}, unexpected={unexpected}")
+def load_model(pth_path: str) -> si.SIRENSDF:
+    state_dict = torch.load(pth_path, map_location=DEVICE, weights_only=True)
+
+    hidden_1_out = state_dict["hidden.1.linear.weight"].shape[0]
+    hidden_2_out = state_dict["hidden.2.linear.weight"].shape[0]
+
+    model = si.SIRENSDF(hidden_dims=[256, hidden_1_out, hidden_2_out])
+    
+    model.load_state_dict(state_dict)
     model.eval().to(DEVICE)
+    
     return model
  
- 
-# ── per-variant training routines ────────────────────────────────────────────
- 
+  
 def run_large_unpruned(mesh_dataset, gt_points, weight_dir, history_dir, seed):
     tag = "large_unpruned"
     pth = os.path.join(weight_dir, f"{tag}.pth")
@@ -165,10 +175,16 @@ def run_large_unpruned(mesh_dataset, gt_points, weight_dir, history_dir, seed):
     torch.save(model.state_dict(), pth)
  
     print(f"    [{tag}] extracting mesh + metrics …")
-    model_eval = load_model(pth, [256, 256, 256])
+    model_eval = load_model(pth)
     chamfer, hausdorff = extract_mesh_and_metrics(model_eval, mesh_dataset, gt_points, obj)
-    print(f"    [{tag}] chamfer={chamfer:.4f} | hausdorff={hausdorff:.4f}")
-    return chamfer, hausdorff
+    print(f"    [{tag}] chamfer={chamfer:.4f} | hausdorff={hausdorff:.4f}\n")
+    
+    print(f"    [{tag}] computing 256^3 IoU …")
+    iou = compute_iou(model_eval, mesh_dataset)
+
+    save_history(history_dir, tag, loss_hist, iou_hist, iou_steps, iou)
+    print(f"    [{tag}] chamfer={chamfer:.4f} | hausdorff={hausdorff:.4f} | iou={iou:.4f}\n")
+    return chamfer, hausdorff, iou
  
  
 def run_densified(mesh_dataset, gt_points, weight_dir, history_dir, seed):
@@ -178,8 +194,7 @@ def run_densified(mesh_dataset, gt_points, weight_dir, history_dir, seed):
  
     print(f"    [{tag}] training …")
     set_seeds(seed)
-    # First hidden layer is widened for densification
-    model      = si.SIRENSDF(hidden_dims=[1102, 256, 256])
+    model      = si.SIRENSDF(hidden_dims=[151, 256, 256])
     model_loss = loss.Loss(**LOSS_KWARGS, model=model)
     optimizer  = torch.optim.Adam(model.parameters(), lr=LR)
  
@@ -193,11 +208,16 @@ def run_densified(mesh_dataset, gt_points, weight_dir, history_dir, seed):
     torch.save(model.state_dict(), pth)
  
     print(f"    [{tag}] extracting mesh + metrics …")
-    # After densification the model collapses back to 256-256-256
-    model_eval = load_model(pth, [256, 256, 256])
+    model_eval = load_model(pth)
     chamfer, hausdorff = extract_mesh_and_metrics(model_eval, mesh_dataset, gt_points, obj)
-    print(f"    [{tag}] chamfer={chamfer:.4f} | hausdorff={hausdorff:.4f}")
-    return chamfer, hausdorff
+    print(f"    [{tag}] chamfer={chamfer:.4f} | hausdorff={hausdorff:.4f}\n")
+    
+    print(f"    [{tag}] computing 256^3 IoU …")
+    iou = compute_iou(model_eval, mesh_dataset)
+
+    save_history(history_dir, tag, loss_hist, iou_hist, iou_steps, iou)
+    print(f"    [{tag}] chamfer={chamfer:.4f} | hausdorff={hausdorff:.4f} | iou={iou:.4f}\n")
+    return chamfer, hausdorff, iou
  
  
 def run_aire(mesh_dataset, gt_points, weight_dir, history_dir, seed, ratio):
@@ -224,14 +244,21 @@ def run_aire(mesh_dataset, gt_points, weight_dir, history_dir, seed, ratio):
     torch.save(model.state_dict(), pth)
  
     print(f"    [{tag}] extracting mesh + metrics …")
-    model_eval = load_model(pth, [256, keep, keep])
+    model_eval = load_model(pth)
     chamfer, hausdorff = extract_mesh_and_metrics(model_eval, mesh_dataset, gt_points, obj)
-    print(f"    [{tag}] chamfer={chamfer:.4f} | hausdorff={hausdorff:.4f}")
-    return chamfer, hausdorff
+    print(f"    [{tag}] chamfer={chamfer:.4f} | hausdorff={hausdorff:.4f}\n")
+    
+    print(f"    [{tag}] computing 256^3 IoU …")
+    iou = compute_iou(model_eval, mesh_dataset)
+
+    save_history(history_dir, tag, loss_hist, iou_hist, iou_steps, iou)
+    print(f"    [{tag}] chamfer={chamfer:.4f} | hausdorff={hausdorff:.4f} | iou={iou:.4f}\n")
+    return chamfer, hausdorff, iou
  
  
 def run_depgraph(mesh_dataset, gt_points, weight_dir, history_dir, seed, ratio):
     keep = hidden_size_after_prune(ratio) - 1   # DepGraph keeps one fewer neuron
+    
     ratio_str = str(ratio)
     tag = f"DepGraph_{ratio_str}"
     pth = os.path.join(weight_dir, f"{tag}.pth")
@@ -254,10 +281,16 @@ def run_depgraph(mesh_dataset, gt_points, weight_dir, history_dir, seed, ratio):
     torch.save(model.state_dict(), pth)
  
     print(f"    [{tag}] extracting mesh + metrics …")
-    model_eval = load_model(pth, [256, keep, keep])
+    model_eval = load_model(pth)
     chamfer, hausdorff = extract_mesh_and_metrics(model_eval, mesh_dataset, gt_points, obj)
-    print(f"    [{tag}] chamfer={chamfer:.4f} | hausdorff={hausdorff:.4f}")
-    return chamfer, hausdorff
+    print(f"    [{tag}] chamfer={chamfer:.4f} | hausdorff={hausdorff:.4f}\n")
+    
+    print(f"    [{tag}] computing 256^3 IoU …")
+    iou = compute_iou(model_eval, mesh_dataset)
+
+    save_history(history_dir, tag, loss_hist, iou_hist, iou_steps, iou)
+    print(f"    [{tag}] chamfer={chamfer:.4f} | hausdorff={hausdorff:.4f} | iou={iou:.4f}\n")
+    return chamfer, hausdorff, iou
  
  
 def run_aire_densified(mesh_dataset, gt_points, weight_dir, history_dir, seed, ratio):
@@ -267,7 +300,7 @@ def run_aire_densified(mesh_dataset, gt_points, weight_dir, history_dir, seed, r
     pth = os.path.join(weight_dir, f"{tag}.pth")
     obj = os.path.join(weight_dir, f"{tag}.obj")
  
-    dense_first = 151  # fixed first-layer width for all densified pruned models
+    dense_first = 151  
  
     print(f"    [{tag}] training  (dense_first={dense_first}, keep={keep}) …")
     set_seeds(seed)
@@ -286,20 +319,27 @@ def run_aire_densified(mesh_dataset, gt_points, weight_dir, history_dir, seed, r
     torch.save(model.state_dict(), pth)
  
     print(f"    [{tag}] extracting mesh + metrics …")
-    model_eval = load_model(pth, [256, keep, keep])
+    model_eval = load_model(pth)
     chamfer, hausdorff = extract_mesh_and_metrics(model_eval, mesh_dataset, gt_points, obj)
-    print(f"    [{tag}] chamfer={chamfer:.4f} | hausdorff={hausdorff:.4f}")
-    return chamfer, hausdorff
+    print(f"    [{tag}] chamfer={chamfer:.4f} | hausdorff={hausdorff:.4f}\n")
+    
+    print(f"    [{tag}] computing 256^3 IoU …")
+    iou = compute_iou(model_eval, mesh_dataset)
+
+    save_history(history_dir, tag, loss_hist, iou_hist, iou_steps, iou)
+    print(f"    [{tag}] chamfer={chamfer:.4f} | hausdorff={hausdorff:.4f} | iou={iou:.4f}\n")
+    return chamfer, hausdorff, iou
  
  
 def run_depgraph_densified(mesh_dataset, gt_points, weight_dir, history_dir, seed, ratio):
     keep = hidden_size_after_prune(ratio) - 1
+
     ratio_str = str(ratio)
     tag = f"DepGraph_{ratio_str}_densified"
     pth = os.path.join(weight_dir, f"{tag}.pth")
     obj = os.path.join(weight_dir, f"{tag}.obj")
  
-    dense_first = 151  # fixed first-layer width for all densified pruned models
+    dense_first = 151 
  
     print(f"    [{tag}] training  (dense_first={dense_first}, keep={keep}) …")
     set_seeds(seed)
@@ -318,14 +358,18 @@ def run_depgraph_densified(mesh_dataset, gt_points, weight_dir, history_dir, see
     torch.save(model.state_dict(), pth)
  
     print(f"    [{tag}] extracting mesh + metrics …")
-    model_eval = load_model(pth, [256, keep, keep])
+    model_eval = load_model(pth)
     chamfer, hausdorff = extract_mesh_and_metrics(model_eval, mesh_dataset, gt_points, obj)
-    print(f"    [{tag}] chamfer={chamfer:.4f} | hausdorff={hausdorff:.4f}")
-    return chamfer, hausdorff
+    print(f"    [{tag}] chamfer={chamfer:.4f} | hausdorff={hausdorff:.4f}\n")
+    
+    print(f"    [{tag}] computing 256^3 IoU …")
+    iou = compute_iou(model_eval, mesh_dataset)
+
+    save_history(history_dir, tag, loss_hist, iou_hist, iou_steps, iou)
+    print(f"    [{tag}] chamfer={chamfer:.4f} | hausdorff={hausdorff:.4f} | iou={iou:.4f}\n")
+    return chamfer, hausdorff, iou
  
- 
-# ── main sweep ───────────────────────────────────────────────────────────────
- 
+  
 def main():
     all_results = {}   # {(mesh, seed, tag): (chamfer, hausdorff)}
  
@@ -337,7 +381,6 @@ def main():
  
         mesh_dataset = data.MeshDataset(ply_path)
  
-        # Ground-truth point cloud for chamfer/hausdorff (reused across seeds)
         gt_points = (
             torch.from_numpy(
                 np.asarray(
@@ -354,46 +397,40 @@ def main():
             print(f"\n  ── seed {seed} ──")
             weight_dir, history_dir = make_dirs(mesh_name, seed)
  
-            # 1. Large un-pruned baseline
-            c, h = run_large_unpruned(mesh_dataset, gt_points, weight_dir, history_dir, seed)
-            all_results[(mesh_name, seed, "large_unpruned")] = (c, h)
+            c, h, iou = run_large_unpruned(mesh_dataset, gt_points, weight_dir, history_dir, seed)
+            all_results[(mesh_name, seed, "large_unpruned")] = (c, h, iou)
+
+            c, h, iou = run_densified(mesh_dataset, gt_points, weight_dir, history_dir, seed)
+            all_results[(mesh_name, seed, "densified")] = (c, h, iou)
+
  
-            # 2. Densified baseline
-            c, h = run_densified(mesh_dataset, gt_points, weight_dir, history_dir, seed)
-            all_results[(mesh_name, seed, "densified")] = (c, h)
- 
-            # 3. Pruning sweep
+            # Pruning
             for ratio in PRUNE_RATIOS:
-                # a) AIRe
-                c, h = run_aire(mesh_dataset, gt_points, weight_dir, history_dir, seed, ratio)
-                all_results[(mesh_name, seed, f"AIRe_{ratio}")] = (c, h)
+                c, h, iou = run_aire(mesh_dataset, gt_points, weight_dir, history_dir, seed, ratio)
+                all_results[(mesh_name, seed, f"AIRe_{ratio}")] = (c, h, iou)
  
-                # b) DepGraph
-                c, h = run_depgraph(mesh_dataset, gt_points, weight_dir, history_dir, seed, ratio)
-                all_results[(mesh_name, seed, f"DepGraph_{ratio}")] = (c, h)
+                c, h, iou = run_depgraph(mesh_dataset, gt_points, weight_dir, history_dir, seed, ratio)
+                all_results[(mesh_name, seed, f"DepGraph_{ratio}")] = (c, h, iou)
  
-                # c) AIRe + densification
-                c, h = run_aire_densified(mesh_dataset, gt_points, weight_dir, history_dir, seed, ratio)
-                all_results[(mesh_name, seed, f"AIRe_{ratio}_densified")] = (c, h)
+                c, h, iou = run_aire_densified(mesh_dataset, gt_points, weight_dir, history_dir, seed, ratio)
+                all_results[(mesh_name, seed, f"AIRe_{ratio}_densified")] = (c, h, iou)
  
-                # d) DepGraph + densification
-                c, h = run_depgraph_densified(mesh_dataset, gt_points, weight_dir, history_dir, seed, ratio)
-                all_results[(mesh_name, seed, f"DepGraph_{ratio}_densified")] = (c, h)
+                c, h, iou = run_depgraph_densified(mesh_dataset, gt_points, weight_dir, history_dir, seed, ratio)
+                all_results[(mesh_name, seed, f"DepGraph_{ratio}_densified")] = (c, h, iou)
  
-    # ── print summary table ──────────────────────────────────────────────────
+    # print summary table 
     print(f"\n\n{'='*80}")
     print("SWEEP COMPLETE – SUMMARY")
     print(f"{'='*80}")
-    header = f"{'mesh':<12} {'seed':>4}  {'variant':<40}  {'chamfer':>10}  {'hausdorff':>10}"
+    header = f"{'mesh':<12} {'seed':>4}  {'variant':<40}  {'chamfer':>10}  {'hausdorff':>10}  {'iou':>10}"
     print(header)
     print("-" * len(header))
-    for (mesh_name, seed, tag), (chamfer, hausdorff) in sorted(all_results.items()):
-        print(f"{mesh_name:<12} {seed:>4}  {tag:<40}  {chamfer:>10.4f}  {hausdorff:>10.4f}")
- 
-    # Persist the summary as numpy archive
-    keys  = [f"{m}|{s}|{t}" for (m, s, t) in all_results]
-    vals  = np.array(list(all_results.values()))   # shape (N, 2)
-    np.savez("sweep_results.npz", keys=np.array(keys), chamfer=vals[:, 0], hausdorff=vals[:, 1])
+    for (mesh_name, seed, tag), (chamfer, hausdorff, iou) in sorted(all_results.items()):
+        print(f"{mesh_name:<12} {seed:>4}  {tag:<40}  {chamfer:>10.4f}  {hausdorff:>10.4f}  {iou:>10.4f}")
+
+    keys = [f"{m}|{s}|{t}" for (m, s, t) in all_results]
+    vals = np.array(list(all_results.values()))   # shape (N, 3)
+    np.savez("sweep_results.npz", keys=np.array(keys), chamfer=vals[:, 0], hausdorff=vals[:, 1], iou=vals[:, 2])
     print("\nResults saved to sweep_results.npz")
  
  

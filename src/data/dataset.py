@@ -3,12 +3,11 @@ import numpy as np
 
 class MeshDataset:
     def __init__(self, mesh_path):
-        o3d.utility.random.seed(42)
         self.mesh = o3d.io.read_triangle_mesh(mesh_path)
         v = np.asarray(self.mesh.vertices)
 
-        vmin = v.min(0)
-        vmax = v.max(0)
+        vmin = v.min(axis=0)
+        vmax = v.max(axis=0)
 
         center = (vmin + vmax) / 2.0
         extent = (vmax - vmin)
@@ -42,7 +41,6 @@ class MeshDataset:
         self.kdtree = o3d.geometry.KDTreeFlann(pcd)
 
 
-    # TODO: think about how the ratio of biased/unbiased points should be in general
     def sample_surface_points(self, num_points, rng: np.random.Generator) -> np.ndarray:
         # Sample points uniformly on the mesh surface
         pcd = np.asarray(self.mesh.sample_points_uniformly(number_of_points=int(2*num_points/3)).points)

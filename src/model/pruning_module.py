@@ -110,6 +110,14 @@ class DepGraph():
         self.pruner.regularize(self.model)
 
     def prune(self):
+        if(self.pruner == None):
+            self.pruner = tp.pruner.GroupNormPruner(
+                self.model,
+                self.example_inputs,
+                importance=tp.importance.GroupMagnitudeImportance(p=2),
+                pruning_ratio=self.threshold,
+                ignored_layers=[self.model.hidden[0].linear, self.model.final],
+            )
         before = sum(p.numel() for p in self.model.parameters())
         self.pruner.step()
         after = sum(p.numel() for p in self.model.parameters())

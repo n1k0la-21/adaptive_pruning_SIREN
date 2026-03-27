@@ -40,7 +40,7 @@ def train(epochs: int, data: MeshDataset, no_surface: int, no_off_surface:int, m
 
     for step in range(epochs):
 
-        if(densification == True and (step == 100 or step == 750)):
+        if(densification == True and (step == 5 or step == 0)):
                 added_frequencies = densify(model=model, optimizer=optimizer)
                 #print(model.hidden[0].omega_scale)
                 print(f"Added {len(added_frequencies)} frequencies to the embedding layer.")
@@ -116,14 +116,14 @@ def train(epochs: int, data: MeshDataset, no_surface: int, no_off_surface:int, m
         current_loss.backward()
         optimizer.step()
         
-        if step % 10 == 0:
+        if step % 5 == 0:
             loss_history.append(current_loss.item())
             
             if(pruning_module != None and step == 200):
                 loss.prune = True
                 print(f"TWD is now applied")
 
-            if(pruning_module != None and step == 700):
+            if(pruning_module != None and step == 5):
                 pruned_neurons = pruning_module.prune()
                 loss.prune = False
                 optimizer = torch.optim.Adam(model.parameters(), lr=optimizer.param_groups[0]['lr'])
@@ -141,7 +141,7 @@ def train(epochs: int, data: MeshDataset, no_surface: int, no_off_surface:int, m
     current_iou = iou(model, grid_mask, grid)
     msg = f"Step {step} | IoU {current_iou:.4f} | Loss {current_loss.item():.4f}"
     print(msg)
-    plot_training(loss_history, iou_history, iou_steps)
+    #plot_training(loss_history, iou_history, iou_steps)
     return loss_history, iou_history, iou_steps
 
 def plot_training(loss_history, iou_history, iou_steps):

@@ -37,7 +37,7 @@ def project(points, model):
     while iterations < max_iter:
         sd = model(model_zero_level.requires_grad_(True))
     
-        if (torch.abs(sd) > 1e-4).sum() == 0:
+        if (torch.abs(sd) > 1e-5).sum() == 0:
             break
         
         sd_grad = torch.autograd.grad(
