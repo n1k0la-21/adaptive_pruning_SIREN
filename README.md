@@ -44,12 +44,12 @@ etc.
 
 After running the script, you will end up with each models weights, extracted meshes (256^3 in resolution) and a 
 summary table of all the computed metrics post-training. Training is done with 3 seeds, with the loss history being tracked
-during training. All files are hierarchically structured by {mesh}_weights/seed_{seed}/ with the loss histories being saved in the
+during training. All files are hierarchically structured by {mesh}_data/seed_{seed}/ with the loss histories being saved in the
 history folder. 
 
 Such a folder structure (example for bunny, seed 42, pruning ratio 0.30) will look as follows:
 ```
-bunny_weights/
+bunny_data/
 └── seed_42/
 |      └── history/
 |      |     ├── large_unpruned_history.npz
