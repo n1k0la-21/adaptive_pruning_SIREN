@@ -20,11 +20,11 @@ conda activate pruning_sdf_nikola
 pip install -r requirements.txt
 ```
 
-Furthermore, the script requires the ground truth meshes, they are provided through this google drive link: 
+Furthermore, the script requires the ground truth meshes, which are provided through this Google Drive link: 
 https://drive.google.com/file/d/1Oq6JcS22T3NBxRTXRuSi_EkyywBtehEQ/view?usp=drive_link
 
-So what is left is to just download the data, extract it and place it in the directory as follows:
-
+So what is left is to just download the data, extract it, and place it in the directory as follows:
+```
 adaptive_pruning_SIREN/
 └── **data/**
 |      └── pointclouds/
@@ -39,4 +39,6 @@ adaptive_pruning_SIREN/
 └── notebooks/
 └── src/
 etc. 
+```
+
 
