@@ -65,4 +65,4 @@ bunny_weights/
 └── seed_44/
 ```
 
-The pruning ratios are [0.30, 0.50, 0.70, 0.85, 0.95] so the script entails 4*3*(2 + 4*5) = 264 runs.
+The pruning ratios are [0.30, 0.50, 0.70, 0.85, 0.95] so the script entails 4x3x(2 + 4x5) = 264 runs.
