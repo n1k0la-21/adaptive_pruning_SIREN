@@ -8,20 +8,25 @@ def chamfer_hausdorff(mesh, model: si.SIRENSDF, path, gt_points):
 
     # mesh -> inr
     inr_points = project(gt_points, model)
+    filtered_points, mask = filter_bbox(inr_points)
+    print(f"mesh -> sdf \n projected points: {inr_points.shape[0]}, after filtering out points outside bbox: {filtered_points.shape[0]}")
 
-    d1 = np.linalg.norm(gt_points.detach().cpu().numpy() - inr_points.detach().cpu().numpy(), axis=-1)
+    d1 = np.linalg.norm(gt_points[mask].detach().cpu().numpy() - filtered_points.detach().cpu().numpy(), axis=-1)
 
     # inr -> mesh
     mesh_inr = o3d.io.read_triangle_mesh(path)
     mesh_points = torch.from_numpy(np.asarray(mesh_inr.sample_points_uniformly(number_of_points=50000).points, dtype=np.float32)).to(torch.device("cuda"))
     # couldnt project from random points (gradients take points on a journey outside bounding box since the further youre outside the less accurate they become)
     inr_points = project(mesh_points, model)
-    query = o3d.core.Tensor(inr_points.detach().cpu().numpy(), dtype=o3d.core.Dtype.Float32)
+    filtered_points, _ = filter_bbox(inr_points)
+    query = o3d.core.Tensor(filtered_points.detach().cpu().numpy(), dtype=o3d.core.Dtype.Float32)
+
+    print(f"sdf -> mesh \n projected points: {inr_points.shape[0]}, after filtering out points outside bbox: {filtered_points.shape[0]}")
 
     corresponding = mesh.scene.compute_closest_points(query)
     gt_closest_points = corresponding['points'].numpy()
 
-    d2 = np.linalg.norm(inr_points.detach().cpu().numpy() - gt_closest_points, axis=-1)
+    d2 = np.linalg.norm(filtered_points.detach().cpu().numpy() - gt_closest_points, axis=-1)
 
     chamfer = (np.mean(d1) + np.mean(d2)) / 2
     hausdorff = max(np.max(d1), np.max(d2))
@@ -53,3 +58,7 @@ def project(points, model):
         iterations += 1
 
     return model_zero_level
+
+def filter_bbox(points):
+    mask = ((points >= -1) & (points <= 1)).all(dim=-1)
+    return points[mask], mask
