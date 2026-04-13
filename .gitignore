@@ -5,7 +5,7 @@ Images/
 experiment_results_inr_pruning/
 env/
 dragon_data/
-data/
+data/pointclouds/
 bunny_data/
 armadillo_data/
 to_ignore/
