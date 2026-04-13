@@ -1,6 +1,9 @@
 ## Usage
 
-To run `sweep.py` (script for training, extracting meshes and saving metrics), create an environment either through:
+A notebook is provided to give an insight into how I used the framework for my thesis. The results used have been extracted using 
+'sweep.py'.
+
+To run `sweep.py` (script for training, extracting meshes, and saving metrics), create an environment either through:
 
 ### Using `venv`
 
