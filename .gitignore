@@ -1,0 +1,13 @@
+pruning_sdf_nikola/
+lucy_data/
+lucy_weights/
+Images/
+experiment_results_inr_pruning/
+env/
+dragon_data/
+data/
+bunny_data/
+armadillo_data/
+to_ignore/
+test/
+__pycache__/
