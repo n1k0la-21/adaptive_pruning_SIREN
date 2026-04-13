@@ -49,7 +49,7 @@ MESHES = ["bunny", "armadillo", "dragon", "lucy"]
 SEEDS = [42, 43, 44]
  
 # 30 % → 99 % in somewhat logarithmic steps (5 total)
-PRUNE_RATIOS = [0.30, 0.50, 0.70, 0.85, 0.95]
+PRUNE_RATIOS = [0.3, 0.5, 0.7, 0.85, 0.95]
  
 EPOCHS       = 1000
 NO_SURFACE   = 10000

@@ -46,7 +46,6 @@ def normal_loss(pred_sdf, coords, gt_normals, on_surface_mask):
 
     surface_normals = gt_normals[on_surface_mask]
 
-    # Compute gradient of SDF w.r.t input coordinates
     sdf_grad = torch.autograd.grad(
         outputs=pred_sdf,
         inputs=coords,
