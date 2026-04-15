@@ -1,6 +1,17 @@
+## Learning Signed Distance Functions (SDF) through an Implicit Neural Representation (INR)
+
+I have created this repo to maintain my thesis implementation, which focuses on the comparison of pruning methods. For that, I have
+implemented a somewhat simpler version of the SIREN architecture (arXiv:2006.09661). The methods I am comparing are AIRe (arXiv:2510.23943)
+and DepGraph (arXiv:2301.12900). This research analyzes whether AIRe's superior performance lies in their densification step, which is tailored
+towards SIREN, while DepGraph is a generalized pruning method, which applies to all neural networks. They are both applied while training the model
+with adjustable pruning ratios.
+
 ## Usage
 
-To run `sweep.py` (script for training, extracting meshes and saving metrics), create an environment either through:
+A notebook is provided to give an insight into how I used the framework for my thesis. The results used have been extracted using 
+'sweep.py'.
+
+To run `sweep.py` (script for training, extracting meshes, and saving metrics), create an environment either through:
 
 ### Using `venv`
 
