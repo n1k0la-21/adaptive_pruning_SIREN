@@ -44,13 +44,13 @@ from src.model.metrics import chamfer_hausdorff
  
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"  
  
-MESHES = ["bunny", "armadillo", "dragon", "lucy"]
+MESHES = [ "lucy"]
  
-SEEDS = [42, 43, 44]
+SEEDS = [43]
  
 
 # 30 % → 99 % in somewhat logarithmic steps (5 total)
-PRUNE_RATIOS = [0.3, 0.5, 0.7, 0.85, 0.95]
+PRUNE_RATIOS = [0.3,0.35,0.4,0.45,0.5,0.55,0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95]
 
  
 EPOCHS       = 1000
@@ -67,7 +67,7 @@ LOSS_KWARGS = dict(
 )
  
 DEVICE = torch.device("cuda")
-MC_RESOLUTION = 256 
+MC_RESOLUTION = 32 
 MC_LEVEL      = 0.0
  
  
@@ -85,9 +85,9 @@ def set_seeds(seed: int) -> None:
 def compute_iou(model, mesh_dataset) -> float:
     """Compute IoU on a 256^3 grid against the ground-truth SDF."""
     with torch.no_grad(): 
-        x = torch.linspace(-1, 1, 256)
-        y = torch.linspace(-1, 1, 256)
-        z = torch.linspace(-1, 1, 256)
+        x = torch.linspace(-1, 1, 16)
+        y = torch.linspace(-1, 1, 16)
+        z = torch.linspace(-1, 1, 16)
         grid = torch.stack(torch.meshgrid(x, y, z, indexing='ij'), dim=-1).reshape(-1, 3)
         grid_o3d = o3d.core.Tensor(grid.numpy(), dtype=o3d.core.Dtype.Float32)
         grid_sdf = mesh_dataset.scene.compute_signed_distance(grid_o3d).numpy()

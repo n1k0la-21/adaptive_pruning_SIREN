@@ -6,11 +6,11 @@ from datetime import datetime
 
 import src.model.SIREN as si
 import src.data.dataset as data
-from src.model.metrics import chamfer_hausdorff_mesh_based  
+from src.model.metrics import chamfer_hausdorff  
 DEVICE = torch.device("cuda")
 
 MESHES = ["bunny", "armadillo", "dragon", "lucy"]
-SEEDS = [42, 43, 44]
+SEEDS = [ 43]
 
 
 # ---------- utils ----------
@@ -89,7 +89,7 @@ def main():
                     model = load_model(pth_path)
 
                     log(f"    [{tag}] computing metrics (existing mesh)...")
-                    chamfer, hausdorff = chamfer_hausdorff_mesh_based(
+                    chamfer, hausdorff = chamfer_hausdorff(
                         mesh_dataset,
                         model,
                         obj_path,
